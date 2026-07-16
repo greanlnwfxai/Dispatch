@@ -1,0 +1,16 @@
+# macOS
+.DS_Store
+
+# Obsidian local workspace state
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
+.obsidian/cache/
+.trash/
+
+# Temporary files
+*.tmp
+*.swp
+*~
+
+# Obsidian vault-local settings
+Dispatch Knowledge/.obsidian/
