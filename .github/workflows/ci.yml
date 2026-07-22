@@ -169,5 +169,5 @@ jobs:
       - name: Idempotent system-role seed
         run: npm run db:seed
 
-      - name: Database integration tests (apps/api: test:integration, test:e2e)
+      - name: "Database integration tests (apps/api: test:integration, test:e2e)"
         run: npm run test:integration --workspace=apps/api && npm run test:e2e --workspace=apps/api

@@ -267,8 +267,14 @@ container healthchecks and were verified through HTTP reachability.
   deploy`, the idempotent seed, and the database integration test suite
   (`test:integration` + `test:e2e` for `apps/api`). No deployment, no Git
   mutation, no tag creation.
-- Remote GitHub Actions status: **NOT YET RUN** — only the user's push
-  triggers real CI; this cannot be claimed as passed by Claude/Codex.
+- Remote GitHub Actions status for commit `175db1f`: **FAILED BEFORE JOB
+  CREATION** in run `29910428244`. GitHub could not parse the workflow because
+  the database-integration step name contained an unquoted colon
+  (`apps/api: test:integration`).
+- Local workflow correction: the complete step name is now quoted. This changes
+  only workflow display metadata; Prisma, database, test commands, schema,
+  migration, seed, and runtime behavior are unchanged. Remote CI for the
+  corrected workflow is **NOT YET RUN**.
 
 ## Issues Found
 1. **Docker Desktop daemon connectivity drop (environment, not code)** —
@@ -309,6 +315,14 @@ container healthchecks and were verified through HTTP reachability.
 All four issues were found and resolved during this task's own
 verification pass, before declaring PASS.
 
+### Post-push CI Follow-up
+
+The first remote run after commit `175db1f`, GitHub Actions run `29910428244`,
+failed during workflow validation before any job was created. Root cause was an
+unquoted colon in the database-integration step display name. The command itself
+was not executed and no build, test, migration, seed, or database operation
+failed. The step name was corrected locally by quoting the complete YAML value.
+
 ## Risk (Low / Medium / High)
 Low. No credentials, no login, no business endpoint, no default account.
 Additive schema only; migration applied to a database confirmed empty
@@ -345,9 +359,14 @@ Git/Docker/database operation occurred.
 - Audit Log and session tables — explicitly out of scope for this milestone.
 
 ## Next Step
-**AUTH-001** — Authentication and RBAC per Dispatch Knowledge Topic 11 §21
+Commit and push the GitHub Actions workflow syntax correction, then verify that
+the corrected remote CI run passes all jobs. After remote CI is green, proceed
+to **AUTH-001** — Authentication and RBAC per Dispatch Knowledge Topic 11 §21
 Implementation Roadmap.
 
+## Recommended Follow-up Commit Message
+
+`fix(dispatch): quote database integration workflow step name`
 ## Recommended Commit Message
 ```
 feat(dispatch): add database and api foundation
