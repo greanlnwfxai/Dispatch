@@ -10,8 +10,8 @@ reporting. Business knowledge lives in `Dispatch Knowledge/` (Topics
 01–11); this file governs engineering workflow and safety, not business
 rules.
 
-**Current milestone: DEV-FOUNDATION-001 — Repository and Tooling
-Foundation.** No Dispatch business workflow is implemented yet.
+**Current milestone: DEV-FOUNDATION-002 — Database and API Foundation.**
+No Dispatch business workflow is implemented yet.
 
 ## 2. Approved Technical Foundation
 
@@ -27,7 +27,7 @@ Topic 11 §22 — statuses below reflect PO approval, not the document's own
 | Mobile/PWA | Next.js (App Router) + React + TailwindCSS, PWA-ready |
 | Backend API | NestJS + REST (command-oriented, not pure CRUD) |
 | Database | PostgreSQL 16 |
-| ORM direction | Prisma + Repository pattern (not introduced until DEV-FOUNDATION-002) |
+| ORM direction | Prisma + Repository pattern (Identity/Role technical schema introduced in DEV-FOUNDATION-002; business aggregates remain future work) |
 | Auth direction (future AUTH-001) | Short-lived JWT access token + rotating refresh token + server-side session/revocation store. **This supersedes Topic 11 §5.7's session-based recommendation per explicit Product Owner authorization.** Never store tokens in `localStorage`. |
 | Testing | Jest (NestJS native) for `apps/api`; Vitest for `packages/*`, `apps/admin-web`, `apps/mobile-pwa`; Supertest for API integration; Playwright for E2E |
 | CI | GitHub Actions |
@@ -52,12 +52,14 @@ Local URLs: `http://localhost:6001`, `http://localhost:6002/health`,
 Dispatch/
 ├── apps/
 │   ├── admin-web/      # Next.js — Super Admin, Admin, Dispatcher, Stock, Management/Auditor
-│   ├── api/             # NestJS — GET /health only in this milestone
+│   ├── api/             # NestJS — health/readiness endpoints; Identity/Role schema (no business Commands)
+│   │   ├── prisma/       # schema.prisma, migrations/, seed.ts (system roles only, no default User)
+│   │   └── src/infrastructure/database/  # PrismaModule/Service, Identity/Role repository adapters
 │   └── mobile-pwa/      # Next.js PWA — Internal Delivery Employee
 ├── packages/
-│   ├── contracts/        # Shared health contract (business Command/Query DTOs are future work)
-│   ├── domain/            # Framework-independent branded-ID helper only — no aggregates yet
-│   ├── shared-types/      # Service identifiers, health response shape
+│   ├── contracts/        # Shared health/readiness contract (business Command/Query DTOs are future work)
+│   ├── domain/            # Framework-independent Identity/Role record types + repository interfaces — no business aggregates yet
+│   ├── shared-types/      # Service identifiers, health/readiness shape, approved role codes
 │   ├── validation/        # Generic assertion helpers — no BR-xxx/VR-xxx business rules
 │   └── test-utils/        # Shared health-response test assertions
 ├── e2e/                   # Playwright — foundation reachability suite
@@ -91,10 +93,10 @@ Dispatch/
 
 ## 7. Current Next Step
 
-**DEV-FOUNDATION-002** — Database and API foundation (initial Prisma
-schema for Identity/Role, API skeleton extension, no business Commands) per
-Dispatch Knowledge Topic 11 §21 Implementation Roadmap. Requires
-TDR-DATABASE-001 and TDR-ORM-001 to remain approved as recorded in Topic 11.
+**AUTH-001** — Authentication and RBAC (JWT access/refresh + server-side
+session/revocation store; Guard layers 1–2 per Dispatch Knowledge Topic 11
+§10) per Topic 11 §21 Implementation Roadmap. Requires DEV-FOUNDATION-002
+(complete) and TDR-AUTH-001 to remain approved as recorded in Topic 11.
 
 ---
 
@@ -136,6 +138,7 @@ Run in this order before declaring a task PASS:
 ```bash
 ./scripts/verify.sh
 ./scripts/docker-verify.sh
+./scripts/db-verify.sh
 ./scripts/api-smoke-test.sh
 ./scripts/mobile-verify.sh
 ./scripts/security-review.sh
@@ -151,9 +154,10 @@ A task is **PASS** only if all required commands for its scope exit 0.
 
 | Script | Purpose |
 |---|---|
-| `scripts/verify.sh` | workspace consistency, lint, typecheck, unit tests, builds, compose config validation |
+| `scripts/verify.sh` | workspace consistency, lint, typecheck, unit tests, builds, Prisma generate/validate, compose config validation |
 | `scripts/docker-verify.sh` | non-destructive build/start + health checks for db/api/admin-web/mobile-pwa |
-| `scripts/api-smoke-test.sh` | `GET /health` — foundation endpoints only |
+| `scripts/db-verify.sh` | migration deploy, idempotent system-role seed, read-only DB inspection, DB integration tests — non-destructive, never drops/resets/truncates |
+| `scripts/api-smoke-test.sh` | `GET /health`, `/health/live`, `/health/ready` — foundation endpoints only |
 | `scripts/mobile-verify.sh` | Mobile/PWA reachability + manifest check |
 | `scripts/e2e-local.sh` | builds/starts stack, runs Playwright locally, leaves stack running |
 | `scripts/e2e-test.sh` | runs Playwright against an already-running stack (CI/test envs) |
@@ -196,12 +200,24 @@ reintroducing a teardown call.
 
 - NestJS, TypeScript, REST, command-oriented resource design (per Topic 11
   §17) for future business endpoints — not pure CRUD.
-- Only `GET /health` exists in this milestone. Response body is exactly
-  `{"status":"ok","service":"dispatch-api"}` — no extra fields, no secrets.
-- Do not add `/auth/login`, JWT guards, Prisma schema, or any Delivery
-  Task/business module until their approved milestone (see Topic 11 §21).
+- Only health/readiness endpoints exist in this milestone:
+  - `GET /health/live` — process liveness, no database dependency. Body is
+    exactly `{"status":"ok","service":"dispatch-api"}`.
+  - `GET /health/ready` — database-aware readiness (`SELECT 1`). Body is
+    exactly `{"status":"ok","service":"dispatch-api","database":"ok"}` on
+    success; HTTP 503 with a generic body (no host/credential/SQL detail)
+    on database failure.
+  - `GET /health` — backward-compatible alias of `/health/ready`.
+- An Identity/Role technical persistence schema (`User`, `Role`,
+  `UserRoleAssignment` via Prisma) exists as of DEV-FOUNDATION-002 — no
+  password/hash/token/session field, no default User, no controller, no
+  CRUD API, no permission enforcement.
+- Do not add `/auth/login`, JWT guards, session/revocation tables, or any
+  Delivery Task/business module until their approved milestone (see Topic
+  11 §21).
 - Production start command runs compiled `dist/main.js`, never `nest
-  start --watch`.
+  start --watch`. Migrations/seed never run automatically at container
+  startup — see §11 and `scripts/db-verify.sh`.
 
 ## 13. Mobile/PWA Rules
 

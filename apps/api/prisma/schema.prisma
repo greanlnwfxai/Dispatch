@@ -1,0 +1,66 @@
+// Dispatch — Identity/Role technical persistence foundation
+// (DEV-FOUNDATION-002).
+//
+// Scope boundary (see CLAUDE.md, Dispatch Knowledge Topic 11 §7.1/7.2):
+//   - Technical foundation only. No password/hash/token/session field.
+//   - No default User is ever seeded here.
+//   - Exactly the six approved application roles (Topic 03 §4, Topic 11
+//     §7.2) are seeded by prisma/seed.ts — SUPER_ADMIN, ADMIN, DISPATCHER,
+//     STOCK, INTERNAL_DELIVERY_EMPLOYEE, MANAGEMENT_AUDITOR.
+//   - UserRoleAssignment is intentionally cardinality-neutral: Dispatch
+//     Knowledge does not state whether a user may hold more than one role
+//     at a time, so this schema does not enforce single-role or
+//     multi-role policy. That remains an AUTH-001 authorization boundary.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id          String   @id @default(uuid()) @db.Uuid
+  displayName String   @map("display_name") @db.VarChar(255)
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  roleAssignments UserRoleAssignment[]
+
+  @@map("users")
+}
+
+model Role {
+  id           String   @id @default(uuid()) @db.Uuid
+  code         String   @unique @db.VarChar(64)
+  displayName  String   @map("display_name") @db.VarChar(255)
+  isSystemRole Boolean  @default(true) @map("is_system_role")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  userAssignments UserRoleAssignment[]
+
+  @@map("roles")
+}
+
+// Preserves role-assignment history (append-only in spirit): a row is never
+// mutated to change which user/role it links, only created. onDelete:
+// Restrict prevents deleting a User or Role that still has assignments,
+// so history is never silently destroyed by a cascade.
+model UserRoleAssignment {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  roleId     String   @map("role_id") @db.Uuid
+  assignedAt DateTime @default(now()) @map("assigned_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([userId, roleId])
+  @@index([userId])
+  @@index([roleId])
+  @@map("user_role_assignments")
+}

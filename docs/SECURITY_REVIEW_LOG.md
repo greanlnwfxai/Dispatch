@@ -49,5 +49,44 @@ accepted.
 
 ---
 
+## DEV-FOUNDATION-002 — 2026-07-22
+
+### Prisma / @prisma/client added — no HIGH/CRITICAL findings
+
+Added `prisma` and `@prisma/client`, both pinned to the exact version
+`6.19.3` in `package-lock.json`. `npm audit` after install: **0
+vulnerabilities**. No `.security-accepted-risks` entry required.
+
+### Identity/Role schema — no credential material introduced
+
+The new `User`/`Role`/`UserRoleAssignment` Prisma models carry no
+password/hash/token/session field, and `prisma/seed.ts` never creates a
+default User or any credential. Verified via `scripts/db-verify.sh`
+(`SELECT count(*) FROM users` = 0 after migration + seed).
+
+### Readiness endpoint (`GET /health/ready`, and `GET /health` alias) — error detail is server-log-only
+
+`HealthService.getReadiness()` logs the underlying database error
+server-side (`Logger.error`) but throws a generic
+`ServiceUnavailableException("Service unavailable")` to the client on
+failure — no host, credential, or SQL detail reaches the HTTP response.
+Covered by `src/health/health.service.spec.ts` (asserts the serialized
+exception response never matches `password|host|DATABASE_URL`-shaped
+strings).
+
+### Secret scan — WARN on `DATABASE_URL` string occurrences (expected, not a finding)
+
+`scripts/secret-scan.sh` Phase 3 flags `DATABASE_URL` as a WARN pattern
+requiring manual review. Reviewed: every occurrence in this change is the
+literal variable name in a comment or test assertion (e.g. "does not log
+DATABASE_URL", `.not.toMatch(/.../DATABASE_URL/i)`) — no real connection
+string or credential value is present anywhere in source control. No
+`.security-accepted-risks` entry needed (WARN, not FAIL).
+
+**No entries in `.security-accepted-risks` were required for
+DEV-FOUNDATION-002** — no HIGH/CRITICAL finding, accepted or otherwise.
+
+---
+
 <!-- Future accepted-risk entries go below this line, in the format described
      in docs/SECURITY_PATCH_POLICY.md -->

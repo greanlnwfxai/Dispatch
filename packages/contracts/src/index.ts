@@ -8,9 +8,11 @@
  * command boundary this package will eventually expose.
  */
 
-import type { HealthResponse } from "@dispatch/shared-types";
+import type { HealthResponse, ReadinessResponse } from "@dispatch/shared-types";
 
 export const HEALTH_ENDPOINT_PATH = "/health" as const;
+export const HEALTH_LIVE_ENDPOINT_PATH = "/health/live" as const;
+export const HEALTH_READY_ENDPOINT_PATH = "/health/ready" as const;
 
 export function buildHealthUrl(apiBaseUrl: string): string {
   return `${apiBaseUrl.replace(/\/+$/, "")}${HEALTH_ENDPOINT_PATH}`;
@@ -27,4 +29,17 @@ export function isHealthResponse(value: unknown): value is HealthResponse {
   );
 }
 
-export type { HealthResponse } from "@dispatch/shared-types";
+/**
+ * DEV-FOUNDATION-002: GET /health mirrors GET /health/ready — both return
+ * the database-aware readiness payload. GET /health/live stays DB-free and
+ * matches `isHealthResponse` only (no `database` field).
+ */
+export function isReadinessResponse(value: unknown): value is ReadinessResponse {
+  return (
+    isHealthResponse(value) &&
+    "database" in value &&
+    (value as { database: unknown }).database === "ok"
+  );
+}
+
+export type { HealthResponse, ReadinessResponse } from "@dispatch/shared-types";

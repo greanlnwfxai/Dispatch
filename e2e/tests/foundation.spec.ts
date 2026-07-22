@@ -20,8 +20,16 @@ test("Mobile/PWA is reachable and identifies itself", async ({ page }) => {
   await expect(page.getByText("Dispatch Mobile/PWA")).toBeVisible();
 });
 
-test("API health endpoint returns the expected foundation body", async ({ request }) => {
+test("API health endpoint returns the expected readiness body (database-aware)", async ({ request }) => {
   const response = await request.get(`${API_URL}/health`);
+  expect(response.status()).toBe(200);
+  expect(await response.json()).toEqual({ status: "ok", service: "dispatch-api", database: "ok" });
+});
+
+test("API liveness endpoint returns the expected foundation body (no database dependency)", async ({
+  request,
+}) => {
+  const response = await request.get(`${API_URL}/health/live`);
   expect(response.status()).toBe(200);
   expect(await response.json()).toEqual({ status: "ok", service: "dispatch-api" });
 });

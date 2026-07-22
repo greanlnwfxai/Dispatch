@@ -27,12 +27,13 @@ services:
       - "6002:3000"
     environment:
       PORT: 3000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-dispatch_user}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set (see .env.example)}@db:5432/${POSTGRES_DB:-dispatch}?schema=public
     depends_on:
       db:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/health"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/health/ready"]
       interval: 10s
       timeout: 5s
       retries: 5

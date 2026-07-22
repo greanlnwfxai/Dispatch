@@ -12,17 +12,19 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# ── Scope note (DEV-FOUNDATION-001) ─────────────────────────────────────────
+# ── Scope note (DEV-FOUNDATION-002) ─────────────────────────────────────────
 # This workflow runs deterministic, non-Docker checks: lint, typecheck,
 # unit/foundation tests, and production builds for every workspace, plus the
-# security review (dependency audit + secret scan) and a docker-compose
-# config validation (no containers are built or started in CI).
+# security review (dependency audit + secret scan), a docker-compose config
+# validation (no containers are built or started in CI), and a dedicated
+# database-integration job against a PostgreSQL service container.
 #
-# Full Docker build/start/health verification (docker-verify.sh) and the
-# Playwright E2E suite (e2e-local.sh / e2e-test.sh) are required LOCAL gates
-# per CLAUDE.md, run by a human or Claude before declaring a task PASS — they
-# are not run in this workflow to keep initial CI fast and reliable. This is
-# an explicit, documented scope decision, not an oversight.
+# Full Docker build/start/health verification (docker-verify.sh), the
+# database verification harness (db-verify.sh), and the Playwright E2E suite
+# (e2e-local.sh / e2e-test.sh) are required LOCAL gates per CLAUDE.md, run by
+# a human or Claude before declaring a task PASS — they are not run in this
+# workflow to keep CI fast and reliable. This is an explicit, documented
+# scope decision, not an oversight.
 
 jobs:
   # ── Build, Lint, Typecheck, Test — all workspaces ───────────────────────────
@@ -33,6 +35,9 @@ jobs:
     env:
       NEXT_TELEMETRY_DISABLED: "1"
       NEXT_PUBLIC_API_URL: http://localhost:6002
+      # Schema-only placeholder — Prisma generate/validate never open a real
+      # connection with it. No business/deploy step in this job uses it.
+      DATABASE_URL: "postgresql://dispatch_user:ci_placeholder_not_a_real_secret@localhost:5432/dispatch?schema=public"
 
     steps:
       - name: Checkout repository
@@ -49,6 +54,12 @@ jobs:
 
       - name: Prepare shared workspace packages (build packages/* before app typecheck/test)
         run: npm run build:packages
+
+      - name: Prisma generate (schema-only, no database connection)
+        run: npm run prisma:generate
+
+      - name: Prisma validate (schema-only, no database connection)
+        run: npm run prisma:validate
 
       - name: Lint (all workspaces)
         run: npm run lint
@@ -102,3 +113,61 @@ jobs:
 
       - name: Run security review (audit + secret scan)
         run: ./scripts/security-audit.sh && ./scripts/secret-scan.sh
+
+  # ── Database Integration (DEV-FOUNDATION-002) ───────────────────────────────
+  # PostgreSQL 16 service container with test-only credentials (never real
+  # secrets). Runs Prisma generate/validate, migrate deploy, the idempotent
+  # system-role seed, and the database integration test suite. Never
+  # deploys, never mutates Git state, never runs `prisma migrate reset`.
+  db-integration:
+    name: Database Integration
+    runs-on: ubuntu-latest
+
+    env:
+      DATABASE_URL: "postgresql://dispatch_ci_user:dispatch_ci_password_test_only@localhost:5432/dispatch_ci?schema=public"
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: dispatch_ci
+          POSTGRES_USER: dispatch_ci_user
+          POSTGRES_PASSWORD: dispatch_ci_password_test_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dispatch_ci_user -d dispatch_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies (npm workspaces)
+        run: npm ci
+
+      - name: Prepare shared workspace packages
+        run: npm run build:packages
+
+      - name: Prisma generate
+        run: npm run prisma:generate
+
+      - name: Prisma validate
+        run: npm run prisma:validate
+
+      - name: Prisma migrate deploy
+        run: npm run db:migrate:deploy
+
+      - name: Idempotent system-role seed
+        run: npm run db:seed
+
+      - name: Database integration tests (apps/api: test:integration, test:e2e)
+        run: npm run test:integration --workspace=apps/api && npm run test:e2e --workspace=apps/api

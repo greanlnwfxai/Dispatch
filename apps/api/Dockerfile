@@ -26,6 +26,10 @@ COPY package.json tsconfig.base.json ./
 COPY packages ./packages
 COPY apps/api ./apps/api
 
+# Prisma Client types must exist before `nest build` compiles the
+# infrastructure/database layer that imports @prisma/client.
+RUN npx prisma generate --schema=apps/api/prisma/schema.prisma
+
 RUN npm run build:packages \
  && npm run build --workspace=apps/api
 
@@ -43,6 +47,11 @@ COPY --from=builder --chown=dispatch:nodejs /repo/node_modules ./node_modules
 COPY --from=builder --chown=dispatch:nodejs /repo/packages ./packages
 COPY --from=builder --chown=dispatch:nodejs /repo/apps/api/dist ./apps/api/dist
 COPY --from=builder --chown=dispatch:nodejs /repo/apps/api/package.json ./apps/api/package.json
+# Schema + committed migrations + seed.ts — needed at runtime to run
+# `prisma migrate deploy` / `prisma db seed` inside this container (see
+# scripts/db-verify.sh). No automatic migration/seed/reset runs at
+# container startup — CMD below only starts the compiled API.
+COPY --from=builder --chown=dispatch:nodejs /repo/apps/api/prisma ./apps/api/prisma
 
 USER dispatch
 WORKDIR /repo/apps/api

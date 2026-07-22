@@ -94,13 +94,21 @@ until [ "$(docker inspect -f '{{.State.Health.Status}}' dispatch-api 2>/dev/null
 done
 pass "api healthy"
 
-info "Checking GET ${HEALTH_URL} response body..."
+info "Checking GET ${HEALTH_URL} response body (database-aware readiness, DEV-FOUNDATION-002)..."
 HEALTH_BODY="$(curl -fsS "$HEALTH_URL")"
-if [ "$HEALTH_BODY" != '{"status":"ok","service":"dispatch-api"}' ]; then
+if [ "$HEALTH_BODY" != '{"status":"ok","service":"dispatch-api","database":"ok"}' ]; then
   fail "GET /health returned an unexpected body: ${HEALTH_BODY}"
   exit 1
 fi
-pass "GET /health returned the expected body"
+pass "GET /health returned the expected readiness body"
+
+info "Checking GET ${HEALTH_URL}/live response body (liveness — no database dependency)..."
+LIVE_BODY="$(curl -fsS "${HEALTH_URL}/live")"
+if [ "$LIVE_BODY" != '{"status":"ok","service":"dispatch-api"}' ]; then
+  fail "GET /health/live returned an unexpected body: ${LIVE_BODY}"
+  exit 1
+fi
+pass "GET /health/live returned the expected liveness body"
 
 wait_for_reachable() {
   local url="$1" name="$2" service="$3"

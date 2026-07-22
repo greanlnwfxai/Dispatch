@@ -24,3 +24,51 @@ export function createBrandedId<Brand extends string>(
   }
   return value as BrandedId<Brand>;
 }
+
+/**
+ * Identity/Role technical persistence boundary (DEV-FOUNDATION-002).
+ *
+ * These are framework/ORM-independent record shapes and repository
+ * interfaces only — no aggregates, no permission decisions, no
+ * authentication. AUTH-001 owns login/credential behavior; this milestone
+ * only establishes the persistence shape those future modules will build on.
+ *
+ * `UserRoleAssignment` intentionally represents an unbounded set of role
+ * assignments per user. Whether a user may hold more than one active role
+ * at a time is not decided by Dispatch Knowledge Topics 01-10 or Topic 11 —
+ * this schema stays neutral so that policy can be added later (by AUTH-001
+ * or a dedicated authorization milestone) without a schema rewrite.
+ */
+
+export interface UserRecord {
+  id: string;
+  displayName: string;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface RoleRecord {
+  id: string;
+  code: string;
+  displayName: string;
+  isSystemRole: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface UserRoleAssignmentRecord {
+  id: string;
+  userId: string;
+  roleId: string;
+  assignedAt: Date;
+}
+
+export interface UserRepository {
+  findById(id: string): Promise<UserRecord | null>;
+}
+
+export interface RoleRepository {
+  findByCode(code: string): Promise<RoleRecord | null>;
+  listAll(): Promise<RoleRecord[]>;
+}
