@@ -1,8 +1,8 @@
 // Dispatch — Identity/Role technical persistence foundation
-// (DEV-FOUNDATION-002).
+// (DEV-FOUNDATION-002), extended with Authentication/Session persistence
+// (AUTH-001).
 //
-// Scope boundary (see CLAUDE.md, Dispatch Knowledge Topic 11 §7.1/7.2):
-//   - Technical foundation only. No password/hash/token/session field.
+// Scope boundary (see CLAUDE.md, Dispatch Knowledge Topic 11 §7.1/7.2/§10):
 //   - No default User is ever seeded here.
 //   - Exactly the six approved application roles (Topic 03 §4, Topic 11
 //     §7.2) are seeded by prisma/seed.ts — SUPER_ADMIN, ADMIN, DISPATCHER,
@@ -10,7 +10,18 @@
 //   - UserRoleAssignment is intentionally cardinality-neutral: Dispatch
 //     Knowledge does not state whether a user may hold more than one role
 //     at a time, so this schema does not enforce single-role or
-//     multi-role policy. That remains an AUTH-001 authorization boundary.
+//     multi-role policy — AUTH-001 authorization resolves roles per-user
+//     without assuming exactly one.
+//   - `loginId` is a neutral technical identifier (AUTH-001) — not typed,
+//     validated, or named as an email or employee number. Only the
+//     normalized form needed for unique login matching is stored.
+//   - No plaintext password, refresh token, access token, or JWT secret is
+//     ever persisted — only an Argon2id password hash and a SHA-256 hash of
+//     the opaque refresh-token secret.
+//   - AuthSession / RefreshTokenRecord provide server-side session and
+//     revocation state so role/account-status changes and explicit
+//     revocation take effect immediately, without waiting for a refresh
+//     token to expire.
 
 generator client {
   provider = "prisma-client-js"
@@ -28,9 +39,68 @@ model User {
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  roleAssignments UserRoleAssignment[]
+  // ── AUTH-001 credential fields — nullable/off by default so existing and
+  // future technical identities may exist without credentials. `loginId` is
+  // never stored as email/employee-number; only the normalized form needed
+  // for unique login matching is kept. No plaintext password, ever.
+  loginIdNormalized    String?   @map("login_id_normalized") @db.VarChar(320)
+  passwordHash         String?   @map("password_hash") @db.VarChar(255)
+  credentialsEnabled   Boolean   @default(false) @map("credentials_enabled")
+  credentialsUpdatedAt DateTime? @map("credentials_updated_at") @db.Timestamptz(6)
 
+  roleAssignments UserRoleAssignment[]
+  authSessions    AuthSession[]
+
+  @@unique([loginIdNormalized])
   @@map("users")
+}
+
+// Server-side session record (AUTH-001). A session is the unit of
+// revocation: revoking it immediately invalidates every refresh token
+// chained to it, regardless of JWT access-token expiry. `expiresAt` is the
+// absolute upper bound a rotated refresh token's own expiry may never
+// exceed (Topic 11 §10 / CLAUDE.md AUTH-001 boundary). onDelete: Restrict
+// on the User relation prevents a cascade from silently destroying session
+// history.
+model AuthSession {
+  id            String    @id @default(uuid()) @db.Uuid
+  userId        String    @map("user_id") @db.Uuid
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastSeenAt    DateTime? @map("last_seen_at") @db.Timestamptz(6)
+  expiresAt     DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt     DateTime? @map("revoked_at") @db.Timestamptz(6)
+  revokedReason String?   @map("revoked_reason") @db.VarChar(64)
+
+  user          User                 @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  refreshTokens RefreshTokenRecord[]
+
+  @@index([userId])
+  @@index([userId, revokedAt, expiresAt])
+  @@map("auth_sessions")
+}
+
+// Opaque rotating refresh token record (AUTH-001). Only a cryptographic
+// hash of the token's random secret is stored — never the raw token. Each
+// successful refresh marks the current row `usedAt` and links it to its
+// replacement via `replacedByTokenId`, so a used or revoked row can never
+// authorize another rotation; reuse of either is treated as compromise and
+// revokes the owning AuthSession (see AuthService).
+model RefreshTokenRecord {
+  id                String    @id @default(uuid()) @db.Uuid
+  sessionId         String    @map("session_id") @db.Uuid
+  tokenHash         String    @unique @map("token_hash") @db.VarChar(128)
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  expiresAt         DateTime  @map("expires_at") @db.Timestamptz(6)
+  usedAt            DateTime? @map("used_at") @db.Timestamptz(6)
+  revokedAt         DateTime? @map("revoked_at") @db.Timestamptz(6)
+  replacedByTokenId String?   @unique @map("replaced_by_token_id") @db.Uuid
+
+  session         AuthSession         @relation(fields: [sessionId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  replacedByToken RefreshTokenRecord? @relation("TokenReplacement", fields: [replacedByTokenId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  replacesToken   RefreshTokenRecord? @relation("TokenReplacement")
+
+  @@index([sessionId])
+  @@map("refresh_token_records")
 }
 
 model Role {

@@ -5,13 +5,16 @@ covering task creation, stock preparation, assignment, internal delivery
 (GPS check-in, evidence, recipient capture), external courier recording,
 returned goods, reopen, emergency override, and audit/reporting.
 
-**Current milestone: DEV-FOUNDATION-002 — Database and API Foundation.**
+**Current milestone: AUTH-001 — Authentication and RBAC Foundation.**
 This repository contains the monorepo skeleton, database-aware
-health/readiness endpoints, an initial Prisma/PostgreSQL Identity/Role
-technical schema, and local dev tooling. **No Dispatch business workflow,
-login, or authentication is implemented yet.** Business knowledge and
-rules live in `Dispatch Knowledge/` (Topics 01–11) and remain the source
-of truth; `CLAUDE.md` governs engineering workflow and safety.
+health/readiness endpoints, the Identity/Role/Session Prisma schema, and a
+full authentication foundation: login/refresh/logout with short-lived JWT
+access tokens, rotating opaque refresh tokens, server-side session/
+revocation storage, RBAC guards, and minimal login/session shells for
+Admin Web and Mobile/PWA. **No Dispatch business workflow is implemented
+yet.** Business knowledge and rules live in `Dispatch Knowledge/` (Topics
+01–11) and remain the source of truth; `CLAUDE.md` governs engineering
+workflow and safety.
 
 ## Architecture overview
 
@@ -20,7 +23,7 @@ of truth; `CLAUDE.md` governs engineering workflow and safety.
 | Admin Web | Next.js (App Router) + React + TailwindCSS | 6001 |
 | Backend API | NestJS + REST | 6002 |
 | Internal Delivery Mobile/PWA | Next.js (App Router) + React + TailwindCSS, PWA-ready | 6003 |
-| Database | PostgreSQL 16 + Prisma (Identity/Role schema only) | internal only (no host port) |
+| Database | PostgreSQL 16 + Prisma (Identity/Role/Session schema) | internal only (no host port) |
 
 Monorepo managed with npm workspaces (Node.js 22). Shared, framework-free
 foundation packages live under `packages/*`. See `CLAUDE.md` for the full
@@ -62,7 +65,10 @@ npm run dev --workspace=apps/mobile-pwa   # http://localhost:6003
 ## Docker Compose startup
 
 ```bash
-cp .env.example .env   # edit POSTGRES_PASSWORD before first run
+cp .env.example .env   # edit POSTGRES_PASSWORD and JWT_ACCESS_SECRET before first run
+# JWT_ACCESS_SECRET has no weak fallback — the API fails to start without a
+# high-entropy value. Generate one with:
+#   openssl rand -base64 48
 docker compose up -d --build
 ```
 
@@ -98,6 +104,31 @@ User, never a credential). `scripts/db-verify.sh` runs both, plus
 read-only verification and the database integration test suite, and
 never drops, resets, or truncates anything.
 
+## Authentication (AUTH-001)
+
+- `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`,
+  `POST /auth/logout-all`, `GET /auth/me`. Health endpoints remain public.
+- Short-lived JWT access token (default 15 min), returned in the JSON body
+  and held by clients in memory only — never localStorage/sessionStorage/
+  IndexedDB.
+- Opaque rotating refresh token, delivered only via an HttpOnly
+  `dispatch_refresh_token` cookie (`Path=/auth`), never in a JSON body.
+  Rotates on every use; reuse of an already-used/revoked token revokes the
+  owning session immediately.
+- Server-side `AuthSession`/`RefreshTokenRecord` tables provide immediate
+  revocation — a request is authorized only if the session is still active
+  in PostgreSQL, never from JWT claims alone.
+- `loginId` is a neutral technical identifier (not an email/username) —
+  normalized by trim + lowercase.
+- No default account is ever created. The first `SUPER_ADMIN` is created
+  explicitly by an operator:
+  ```bash
+  npm run auth:bootstrap-super-admin --workspace=apps/api -- \
+    --login-id="<loginId>" --display-name="<Display Name>"
+  ```
+  This command is never run automatically by any script, seed, or Docker
+  startup, and prompts for the password interactively (hidden input).
+
 ## Verification commands
 
 Run in this order before considering a change complete (see `CLAUDE.md` §10
@@ -124,14 +155,17 @@ afterward.
 ```
 Dispatch/
 ├── apps/
-│   ├── admin-web/      # Next.js — Admin Web
+│   ├── admin-web/      # Next.js — Admin Web (+ login/session shell, AUTH-001)
 │   ├── api/             # NestJS — Backend API
 │   │   ├── prisma/       # schema.prisma, migrations/, seed.ts
-│   │   └── src/infrastructure/database/  # PrismaModule/Service, repository adapters
-│   └── mobile-pwa/      # Next.js PWA — Internal Delivery Mobile/PWA
+│   │   └── src/
+│   │       ├── auth/                       # AUTH-001 — login/refresh/logout, guards, RBAC
+│   │       ├── bootstrap/                  # Operator-only initial SUPER_ADMIN CLI
+│   │       └── infrastructure/database/     # PrismaModule/Service, repository adapters
+│   └── mobile-pwa/      # Next.js PWA — Internal Delivery Mobile/PWA (+ login/session shell, AUTH-001)
 ├── packages/
-│   ├── contracts/        # Shared health/readiness contract
-│   ├── domain/            # Framework-independent Identity/Role record types + repository interfaces
+│   ├── contracts/        # Shared health/readiness + auth API contract
+│   ├── domain/            # Framework-independent Identity/Role/Session record types + repository interfaces
 │   ├── shared-types/      # Service identifiers, health/readiness shape, approved role codes
 │   ├── validation/        # Generic assertion helpers
 │   └── test-utils/        # Shared test assertions
@@ -154,17 +188,20 @@ them. See `CLAUDE.md` §9.
 
 ## Current limitations
 
-- No business workflow, no login/authentication, no password/token/session
-  storage, and no evidence storage are implemented yet — those are future
-  milestones (AUTH-001, MVP-02 onward per Dispatch Knowledge Topic 11 §21
-  Implementation Roadmap).
-- All health/readiness endpoints are intentionally unauthenticated
-  (required for Docker healthchecks and load balancers ahead of AUTH-001).
-- The Identity/Role schema (`User`, `Role`, `UserRoleAssignment`) is a
-  technical persistence foundation only — no controller, no CRUD API, no
-  permission enforcement, and no default User exists. Whether a user may
-  hold more than one role at a time is not decided by Dispatch Knowledge
-  and remains an AUTH-001 authorization-policy boundary.
+- No Dispatch business workflow (Customer Master, Delivery Task,
+  Preparation, Assignment, delivery/GPS/evidence, Returns, Emergency
+  Override, reporting) is implemented yet — those begin at MVP-02 per
+  Dispatch Knowledge Topic 11 §21 Implementation Roadmap.
+- No user-management or role-management UI, no self-registration, no
+  password reset, no MFA/SSO — all explicitly out of scope for AUTH-001.
+- All health/readiness endpoints remain intentionally unauthenticated
+  (required for Docker healthchecks and load balancers).
+- Whether a user may hold more than one role at a time is not decided by
+  Dispatch Knowledge; `UserRoleAssignment` stays cardinality-neutral and
+  AUTH-001 authorization resolves however many roles are assigned.
+- Production secret management, cookie `Domain`/`Secure` configuration for
+  a real HTTPS domain, and distributed (Redis-backed) rate limiting remain
+  unresolved — see `docs/CTO_SUMMARY_AUTH_001.md` Remaining Work.
 
 ## No production deployment yet
 

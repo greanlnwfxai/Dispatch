@@ -1,12 +1,12 @@
 import { Controller, Get } from "@nestjs/common";
 import type { HealthResponse, ReadinessResponse } from "@dispatch/shared-types";
+import { Public } from "../auth/decorators/public.decorator";
 import { HealthService } from "./health.service";
 
 /**
- * Foundation-only endpoints. No authentication is applied here on purpose:
- * AUTH-001 (JWT access/refresh + server-side revocation) is a future
- * milestone, and health/readiness must stay reachable for Docker
- * healthchecks.
+ * Foundation-only endpoints. Explicitly `@Public()` (AUTH-001 registers a
+ * global JwtAuthenticationGuard) — health/readiness must stay reachable
+ * without an access token for Docker healthchecks.
  *
  * - GET /health/live  — process liveness, no database dependency.
  * - GET /health/ready — application readiness, database-aware (503 on
@@ -14,6 +14,7 @@ import { HealthService } from "./health.service";
  * - GET /health        — backward-compatible alias of /health/ready, kept
  *   for existing Docker healthcheck/frontend links (DEV-FOUNDATION-001).
  */
+@Public()
 @Controller("health")
 export class HealthController {
   constructor(private readonly healthService: HealthService) {}

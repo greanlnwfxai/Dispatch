@@ -10,7 +10,7 @@ reporting. Business knowledge lives in `Dispatch Knowledge/` (Topics
 01–11); this file governs engineering workflow and safety, not business
 rules.
 
-**Current milestone: DEV-FOUNDATION-002 — Database and API Foundation.**
+**Current milestone: AUTH-001 — Authentication and RBAC Foundation.**
 No Dispatch business workflow is implemented yet.
 
 ## 2. Approved Technical Foundation
@@ -28,7 +28,7 @@ Topic 11 §22 — statuses below reflect PO approval, not the document's own
 | Backend API | NestJS + REST (command-oriented, not pure CRUD) |
 | Database | PostgreSQL 16 |
 | ORM direction | Prisma + Repository pattern (Identity/Role technical schema introduced in DEV-FOUNDATION-002; business aggregates remain future work) |
-| Auth direction (future AUTH-001) | Short-lived JWT access token + rotating refresh token + server-side session/revocation store. **This supersedes Topic 11 §5.7's session-based recommendation per explicit Product Owner authorization.** Never store tokens in `localStorage`. |
+| Auth (AUTH-001, implemented) | Short-lived JWT access token + rotating refresh token + server-side session/revocation store. **This supersedes Topic 11 §5.7's session-based recommendation per explicit Product Owner authorization.** Tokens are never stored in `localStorage`/`sessionStorage`/IndexedDB. |
 | Testing | Jest (NestJS native) for `apps/api`; Vitest for `packages/*`, `apps/admin-web`, `apps/mobile-pwa`; Supertest for API integration; Playwright for E2E |
 | CI | GitHub Actions |
 | Local orchestration | Docker Compose on macOS |
@@ -51,14 +51,17 @@ Local URLs: `http://localhost:6001`, `http://localhost:6002/health`,
 ```
 Dispatch/
 ├── apps/
-│   ├── admin-web/      # Next.js — Super Admin, Admin, Dispatcher, Stock, Management/Auditor
-│   ├── api/             # NestJS — health/readiness endpoints; Identity/Role schema (no business Commands)
+│   ├── admin-web/      # Next.js — Super Admin, Admin, Dispatcher, Stock, Management/Auditor; login/session shell (AUTH-001)
+│   ├── api/             # NestJS — health/readiness endpoints; Identity/Role schema; AuthModule (AUTH-001, no business Commands)
 │   │   ├── prisma/       # schema.prisma, migrations/, seed.ts (system roles only, no default User)
-│   │   └── src/infrastructure/database/  # PrismaModule/Service, Identity/Role repository adapters
-│   └── mobile-pwa/      # Next.js PWA — Internal Delivery Employee
+│   │   └── src/
+│   │       ├── auth/                       # AUTH-001 — login/refresh/logout/RBAC, no business workflow
+│   │       ├── bootstrap/                  # Operator-only initial SUPER_ADMIN CLI (never automatic)
+│   │       └── infrastructure/database/     # PrismaModule/Service, Identity/Role/Session repository adapters
+│   └── mobile-pwa/      # Next.js PWA — Internal Delivery Employee; login/session shell (AUTH-001)
 ├── packages/
-│   ├── contracts/        # Shared health/readiness contract (business Command/Query DTOs are future work)
-│   ├── domain/            # Framework-independent Identity/Role record types + repository interfaces — no business aggregates yet
+│   ├── contracts/        # Shared health/readiness + auth API contract (business Command/Query DTOs are future work)
+│   ├── domain/            # Framework-independent Identity/Role/Session record types + repository interfaces — no business aggregates yet
 │   ├── shared-types/      # Service identifiers, health/readiness shape, approved role codes
 │   ├── validation/        # Generic assertion helpers — no BR-xxx/VR-xxx business rules
 │   └── test-utils/        # Shared health-response test assertions
@@ -88,15 +91,20 @@ Dispatch/
 
 ## 6. Current Milestone
 
-**DEV-FOUNDATION-001** — repository and tooling foundation only. See
-`docs/CTO_SUMMARY_DEV_FOUNDATION_001.md` for the full report.
+**AUTH-001** — Authentication and RBAC foundation: JWT access/refresh +
+server-side session/revocation store, Guard layers 1–2 per Dispatch
+Knowledge Topic 11 §10, neutral `loginId`, operator-only SUPER_ADMIN
+bootstrap. See `docs/CTO_SUMMARY_AUTH_001.md` for the full report. Prior
+milestones: `docs/CTO_SUMMARY_DEV_FOUNDATION_001.md`,
+`docs/CTO_SUMMARY_DEV_FOUNDATION_002.md`.
 
 ## 7. Current Next Step
 
-**AUTH-001** — Authentication and RBAC (JWT access/refresh + server-side
-session/revocation store; Guard layers 1–2 per Dispatch Knowledge Topic 11
-§10) per Topic 11 §21 Implementation Roadmap. Requires DEV-FOUNDATION-002
-(complete) and TDR-AUTH-001 to remain approved as recorded in Topic 11.
+**MVP-02** — Customer and Task Creation (`CreateDeliveryTask`, Customer
+Master search/free-text) per Topic 11 §21 Implementation Roadmap. Requires
+AUTH-001 (complete). Business route-permission matrix, User/Role-management
+UI, and production secret/cookie/domain configuration remain unresolved —
+see `docs/CTO_SUMMARY_AUTH_001.md` Remaining Work.
 
 ---
 
@@ -200,7 +208,8 @@ reintroducing a teardown call.
 
 - NestJS, TypeScript, REST, command-oriented resource design (per Topic 11
   §17) for future business endpoints — not pure CRUD.
-- Only health/readiness endpoints exist in this milestone:
+- Health/readiness endpoints are public (`@Public()`, exempt from the
+  global auth guard):
   - `GET /health/live` — process liveness, no database dependency. Body is
     exactly `{"status":"ok","service":"dispatch-api"}`.
   - `GET /health/ready` — database-aware readiness (`SELECT 1`). Body is
@@ -208,23 +217,35 @@ reintroducing a teardown call.
     success; HTTP 503 with a generic body (no host/credential/SQL detail)
     on database failure.
   - `GET /health` — backward-compatible alias of `/health/ready`.
-- An Identity/Role technical persistence schema (`User`, `Role`,
-  `UserRoleAssignment` via Prisma) exists as of DEV-FOUNDATION-002 — no
-  password/hash/token/session field, no default User, no controller, no
-  CRUD API, no permission enforcement.
-- Do not add `/auth/login`, JWT guards, session/revocation tables, or any
-  Delivery Task/business module until their approved milestone (see Topic
-  11 §21).
+- Identity/Role/Session persistence (`User`, `Role`, `UserRoleAssignment`,
+  `AuthSession`, `RefreshTokenRecord` via Prisma) exists as of AUTH-001 —
+  `User.passwordHash`/`loginIdNormalized`/`credentialsEnabled` are
+  nullable/off-by-default, no default User is ever seeded or bootstrapped
+  automatically, no plaintext password/token is ever persisted.
+- Authentication (`apps/api/src/auth/`): `POST /auth/login`,
+  `POST /auth/refresh`, `POST /auth/logout`, `POST /auth/logout-all`,
+  `GET /auth/me`. `JwtAuthenticationGuard` is global (`APP_GUARD`) — every
+  route requires a valid access token unless `@Public()`. `RolesGuard` +
+  `@Roles(...)` resolve authorization from PostgreSQL per-request, never
+  from JWT/client-supplied role claims. Do not add Delivery Task or other
+  business modules until their approved milestone (see Topic 11 §21).
 - Production start command runs compiled `dist/main.js`, never `nest
   start --watch`. Migrations/seed never run automatically at container
-  startup — see §11 and `scripts/db-verify.sh`.
+  startup — see §11 and `scripts/db-verify.sh`. The SUPER_ADMIN bootstrap
+  CLI (`npm run auth:bootstrap-super-admin --workspace=apps/api`) is an
+  explicit operator action, never run automatically by any script,
+  container startup, or seed.
 
 ## 13. Mobile/PWA Rules
 
 - Next.js App Router, React, TypeScript, TailwindCSS, PWA-ready structure
   (`app/manifest.ts`).
-- No login, no GPS, no camera/evidence capture, no generated icon assets
-  until their approved milestone.
+- Admin Web and Mobile/PWA both implement the AUTH-001 login/session shell:
+  access token in memory only (never localStorage/sessionStorage/
+  IndexedDB), refresh token only via the HttpOnly cookie the browser
+  manages, one-shot session bootstrap on load, generic login error, logout.
+  No role-based delivery workflow, GPS, camera/evidence capture, or
+  generated icon assets until their approved milestone.
 - Production container serves Next's `output: "standalone"` build.
 
 ## 14. CTO Summary Format
@@ -250,9 +271,8 @@ Run before declaring done:
 A task must NOT be declared PASS if any of the following are true:
 
 - Password, token, or hash value exposed in logs, response, or source
-- New endpoint missing an appropriate auth guard or role check (once
-  AUTH-001 exists)
-- RBAC bypass possible via crafted request (once role checks exist)
+- New endpoint missing an appropriate auth guard or role check
+- RBAC bypass possible via crafted request
 - Secret committed to source control
 - HIGH or CRITICAL dependency vulnerability without a patch or a documented
   accepted-risk entry (`.security-accepted-risks` + `docs/SECURITY_REVIEW_LOG.md`)

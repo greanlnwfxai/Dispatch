@@ -1,17 +1,30 @@
 import { Module } from "@nestjs/common";
 import { PrismaModule } from "../prisma/prisma.module";
 import { PrismaRoleRepository } from "./prisma-role.repository";
+import { PrismaSessionRepository } from "./prisma-session.repository";
 import { PrismaUserRepository } from "./prisma-user.repository";
+import { PrismaUserRoleAssignmentRepository } from "./prisma-user-role-assignment.repository";
 
 /**
- * Identity/Role repository boundary (DEV-FOUNDATION-002). No controller and
- * no application use case consume these yet — this milestone only
- * establishes the persistence boundary future modules (AUTH-001 onward)
- * will build on.
+ * Identity/Role/Session repository boundary. AUTH-001 adds
+ * PrismaSessionRepository (server-side session/revocation persistence) and
+ * PrismaUserRoleAssignmentRepository (role-code resolution for the
+ * authenticated principal) alongside the DEV-FOUNDATION-002 User/Role
+ * repositories.
  */
 @Module({
   imports: [PrismaModule],
-  providers: [PrismaUserRepository, PrismaRoleRepository],
-  exports: [PrismaUserRepository, PrismaRoleRepository],
+  providers: [
+    PrismaUserRepository,
+    PrismaRoleRepository,
+    PrismaUserRoleAssignmentRepository,
+    PrismaSessionRepository,
+  ],
+  exports: [
+    PrismaUserRepository,
+    PrismaRoleRepository,
+    PrismaUserRoleAssignmentRepository,
+    PrismaSessionRepository,
+  ],
 })
 export class RepositoriesModule {}

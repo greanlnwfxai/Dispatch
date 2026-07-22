@@ -148,6 +148,14 @@ if [ "$USER_COUNT" != "0" ]; then
 fi
 pass "No default User exists (0 rows in users)"
 
+info "Verifying AUTH-001 auth_sessions/refresh_token_records tables exist..."
+AUTH_TABLE_COUNT="$(docker compose exec -T db psql -U "${POSTGRES_USER:-dispatch_user}" -d "${POSTGRES_DB:-dispatch}" -tA -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('auth_sessions','refresh_token_records');" | tr -d '[:space:]')"
+if [ "$AUTH_TABLE_COUNT" != "2" ]; then
+  fail "Expected both auth_sessions and refresh_token_records tables to exist, found ${AUTH_TABLE_COUNT}/2"
+  exit 1
+fi
+pass "auth_sessions and refresh_token_records tables exist"
+
 # ── 7. Database integration tests ────────────────────────────────────────────
 # Run in a throwaway container built from the Dockerfile's "builder" stage
 # (has devDependencies, ts-jest, and raw test/ sources — the production
@@ -157,14 +165,34 @@ info "Building the test-runner image (Dockerfile 'builder' stage, cached after f
 docker build --target builder -f apps/api/Dockerfile -t dispatch-api-test-runner:latest . >/dev/null
 pass "Test-runner image ready"
 
-info "Running database integration tests (apps/api: test:integration, test:e2e)..."
+info "Running database integration tests (apps/api: test:integration, test:e2e — includes AUTH-001 auth.integration-spec/auth.e2e-spec)..."
 docker run --rm \
   --network dispatch_default \
   -e DATABASE_URL="postgresql://${POSTGRES_USER:-dispatch_user}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-dispatch}?schema=public" \
+  -e JWT_ACCESS_SECRET="db-verify-test-only-jwt-access-secret-not-a-real-secret" \
+  -e AUTH_LOGIN_RATE_LIMIT="1000:60" \
+  -e AUTH_REFRESH_RATE_LIMIT="1000:60" \
   -w /repo/apps/api \
   dispatch-api-test-runner:latest \
   sh -c "npm run test:integration && npm run test:e2e"
 pass "Database integration tests passed"
+
+info "Verifying test suites left no residual session/refresh-token rows..."
+SESSION_COUNT="$(docker compose exec -T db psql -U "${POSTGRES_USER:-dispatch_user}" -d "${POSTGRES_DB:-dispatch}" -tA -c "SELECT count(*) FROM auth_sessions;" | tr -d '[:space:]')"
+TOKEN_COUNT="$(docker compose exec -T db psql -U "${POSTGRES_USER:-dispatch_user}" -d "${POSTGRES_DB:-dispatch}" -tA -c "SELECT count(*) FROM refresh_token_records;" | tr -d '[:space:]')"
+if [ "$SESSION_COUNT" != "0" ] || [ "$TOKEN_COUNT" != "0" ]; then
+  fail "Expected 0 residual sessions/refresh tokens after test cleanup, found ${SESSION_COUNT} session(s), ${TOKEN_COUNT} token(s)"
+  exit 1
+fi
+pass "No residual test sessions or refresh-token records (0/0)"
+
+info "Re-confirming no default User exists after the test suite ran..."
+POST_TEST_USER_COUNT="$(docker compose exec -T db psql -U "${POSTGRES_USER:-dispatch_user}" -d "${POSTGRES_DB:-dispatch}" -tA -c "SELECT count(*) FROM users;" | tr -d '[:space:]')"
+if [ "$POST_TEST_USER_COUNT" != "0" ]; then
+  fail "Expected 0 Users after test cleanup, found ${POST_TEST_USER_COUNT}"
+  exit 1
+fi
+pass "No residual test Users (0 rows in users)"
 
 # ── Summary ────────────────────────────────────────────────────────────────────
 echo "=============================================="

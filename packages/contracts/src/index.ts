@@ -43,3 +43,41 @@ export function isReadinessResponse(value: unknown): value is ReadinessResponse 
 }
 
 export type { HealthResponse, ReadinessResponse } from "@dispatch/shared-types";
+
+/**
+ * Authentication API contract (AUTH-001). Shapes only — no client
+ * implementation. `refreshToken` deliberately never appears here: it is
+ * carried only by an HttpOnly cookie, never in a JSON body (see
+ * CLAUDE.md AUTH-001 boundary).
+ */
+import type { DispatchRoleCode } from "@dispatch/shared-types";
+
+export const AUTH_LOGIN_PATH = "/auth/login" as const;
+export const AUTH_REFRESH_PATH = "/auth/refresh" as const;
+export const AUTH_LOGOUT_PATH = "/auth/logout" as const;
+export const AUTH_LOGOUT_ALL_PATH = "/auth/logout-all" as const;
+export const AUTH_ME_PATH = "/auth/me" as const;
+
+export interface AuthPrincipal {
+  userId: string;
+  displayName: string;
+  roleCodes: DispatchRoleCode[];
+}
+
+export interface LoginRequestBody {
+  loginId: string;
+  password: string;
+}
+
+export interface AccessTokenResponse {
+  accessToken: string;
+  accessTokenExpiresAt: string;
+}
+
+export interface LoginResponseBody extends AccessTokenResponse {
+  principal: AuthPrincipal;
+}
+
+export function buildAuthUrl(apiBaseUrl: string, path: string): string {
+  return `${apiBaseUrl.replace(/\/+$/, "")}${path}`;
+}

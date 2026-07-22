@@ -105,11 +105,20 @@ These remain future enhancements beyond the current harness.
 
 ## Foundation Scope Note
 
-DEV-FOUNDATION-001 introduces no authentication, no business endpoints, and
-no PII-handling code. `docs/SECURITY_REVIEW_CHECKLIST.md` reflects that —
-most auth/RBAC/data-privacy items are marked N/A until AUTH-001 and later
-business milestones land. Do not mark those items PASS in this milestone;
-mark them N/A with the reason.
+AUTH-001 introduces the authentication/RBAC foundation (login, JWT
+access/refresh, server-side session/revocation, guards) — the
+authentication/RBAC/password-token items in
+`docs/SECURITY_REVIEW_CHECKLIST.md` are now applicable and marked PASS.
+Business data-model/PII items (customer data, delivery task data) remain
+N/A until MVP-02 and later milestones land. Do not mark those items PASS in
+this milestone; mark them N/A with the reason.
+
+`scripts/verify.sh` and `scripts/mobile-verify.sh` also carry a static
+scan for client-side token-storage writes (`localStorage.setItem`,
+`sessionStorage.setItem`, `indexedDB.open`) — scoped to
+`apps/admin-web/src`/`apps/mobile-pwa/src`, excluding test files (which
+legitimately assert the absence of such writes via read-only
+`.length === 0` checks).
 
 ---
 

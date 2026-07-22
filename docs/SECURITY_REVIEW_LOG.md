@@ -88,5 +88,71 @@ DEV-FOUNDATION-002** — no HIGH/CRITICAL finding, accepted or otherwise.
 
 ---
 
+## AUTH-001 — 2026-07-22
+
+### New dependencies (`@nestjs/jwt`, `@nestjs/throttler`, `cookie-parser`, `@node-rs/argon2`) — no HIGH/CRITICAL findings
+
+All four exact-pinned in `apps/api/package.json`. `npm audit` after install:
+**0 vulnerabilities**. `@node-rs/argon2` (not `argon2`) was chosen because it
+ships prebuilt native bindings for `linux-x64-musl`/`linux-arm64-musl`
+(the API's Alpine production image) as well as `darwin-arm64` (local dev) —
+avoiding a native `node-gyp` build step in the Docker image. No
+`.security-accepted-risks` entry required.
+
+### Refresh-token hashing uses SHA-256, not Argon2id — intentional, not a weakened control
+
+Passwords use Argon2id (slow, memory-hard) because human-chosen secrets have
+limited entropy and must resist offline brute-force. Refresh-token secrets
+are library-generated with 256 bits of entropy (`crypto.randomBytes(32)`)
+— brute-forcing is already computationally infeasible, so a fast
+cryptographic hash (SHA-256) is the correct, standard choice; using Argon2id
+here would only add unnecessary latency per refresh with no security
+benefit. See `RefreshTokenService` doc comment.
+
+### Accidental secret exposure in this session's tool output — remediated by rotation, not by an accepted-risk entry
+
+While verifying the `docker-compose.yml` wiring, a command printed the real
+local-development `JWT_ACCESS_SECRET` and the pre-existing
+`POSTGRES_PASSWORD` embedded in the rendered `DATABASE_URL` into this
+session's tool output. No value was committed to Git, but both values were
+treated as exposed.
+
+Remediation completed:
+
+- `JWT_ACCESS_SECRET` was regenerated; the replacement value was never printed.
+- The PostgreSQL password for role `dispatch_user` was rotated interactively
+  through `psql` without printing the value.
+- TCP password authentication using the replacement PostgreSQL credential
+  succeeded.
+- The ignored local `.env` was updated to the replacement value and retained
+  permission mode `600`.
+- `dispatch-db` and `dispatch-api` were recreated non-destructively with
+  `docker compose up -d --force-recreate db api`; the existing PostgreSQL
+  volume was preserved.
+- Both containers returned `healthy`; `GET /health/ready` returned database
+  status `ok`; Prisma reported both committed migrations applied and the
+  schema up to date.
+- The temporary secret file was removed, its environment-variable reference
+  was unset, and the clipboard was cleared.
+- No Git-tracked secret, password, token, hash, or connection string was added.
+
+All subsequent Compose checks were presence-only or redacted. This incident
+was remediated through credential rotation and therefore requires no
+accepted-risk entry.
+
+### Auth database integration/e2e tests — verified clean residue
+
+`apps/api/test/auth.integration-spec.ts` and `apps/api/test/auth.e2e-spec.ts`
+create only uniquely-scoped test Users/AuthSessions/RefreshTokenRecords and
+delete exactly those rows in `afterAll`. Verified via direct `psql` counts
+after a full local test run: `users`=0, `auth_sessions`=0,
+`refresh_token_records`=0, `roles`=6 — no residue, no impact on the six
+seeded system roles.
+
+**No entries in `.security-accepted-risks` were required for AUTH-001** — no
+HIGH/CRITICAL finding, accepted or otherwise.
+
+---
+
 <!-- Future accepted-risk entries go below this line, in the format described
      in docs/SECURITY_PATCH_POLICY.md -->

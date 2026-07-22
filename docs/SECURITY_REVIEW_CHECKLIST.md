@@ -5,46 +5,47 @@ CTO Summary must include a Security Review section (see `CLAUDE.md`).
 
 Mark each item: ✅ PASS | ❌ FAIL | N/A | ⚠️ REVIEW
 
-Most items below are **N/A in DEV-FOUNDATION-001** because no authentication,
-RBAC, or business data-handling code exists yet. Do not mark them PASS just
-because nothing broke — mark them N/A with the reason, and revisit at the
-milestone that actually introduces the behavior (AUTH-001, MVP-02, ...).
+Items below marked with a milestone tag (e.g. "AUTH-001") reflect the
+milestone that introduced the behavior. Business-data-model and
+GPS/camera/evidence items remain N/A until the milestones that introduce
+them (MVP-02 onward).
 
 ---
 
-## Authentication (N/A until AUTH-001)
+## Authentication (AUTH-001)
 
-- [ ] All new/changed endpoints have an auth guard applied
-- [ ] No login endpoint exists yet in this milestone
-- [ ] `/health` is intentionally unauthenticated (required for Docker healthchecks) and documented as such
-- [ ] No authentication bypass possible via header manipulation
+- [x] All new/changed endpoints have an auth guard applied — `JwtAuthenticationGuard` is global (`APP_GUARD`); routes opt out explicitly via `@Public()`
+- [x] Login (`POST /auth/login`), refresh (`POST /auth/refresh`), logout, logout-all, and `GET /auth/me` implemented (AUTH-001)
+- [x] `/health*` remain intentionally unauthenticated (`@Public()`, required for Docker healthchecks) and documented as such
+- [x] No authentication bypass possible via header manipulation — access token is verified (signature/issuer/audience/expiry) and the session/user/roles are re-resolved from PostgreSQL on every request, never trusted from the JWT payload alone
 
-## Authorization / RBAC (N/A until AUTH-001 / role-aware modules)
+## Authorization / RBAC (AUTH-001)
 
-- [ ] Role checks applied to endpoints that require elevated privileges
-- [ ] No privilege escalation possible via crafted request payloads
-- [ ] New roles (if added) are reflected in all relevant guards
+- [x] Role checks applied via `RolesGuard` + `@Roles(...)`, resolved from the database-loaded principal, never from client-supplied or JWT-claimed role data
+- [x] No privilege escalation possible via crafted request payloads — RBAC e2e test confirms 403 for an insufficient role and 401 with no token
+- [x] All six approved role codes (`@dispatch/shared-types`) are the only ones `RolesGuard`/`JwtAuthenticationGuard` will ever accept — unknown codes are filtered out when resolving the principal
 
-## Password / Token / Hash Security (N/A until AUTH-001)
+## Password / Token / Hash Security (AUTH-001)
 
-- [ ] Passwords are hashed with a strong algorithm (bcrypt/argon2), never stored plain
-- [ ] No plain-text password or token appears in any log output
-- [ ] `JWT_SECRET` (when introduced) is read from environment variable, never hardcoded
-- [ ] Access tokens are short-lived; refresh tokens rotate; revocation is server-side (Topic 11 §5.7 PO-authorized direction)
-- [ ] No token is ever stored in browser `localStorage` on any client
+- [x] Passwords are hashed with Argon2id (`@node-rs/argon2`), never stored plain
+- [x] No plain-text password, refresh token, or access token appears in any log output (`PrismaService` logs only `error`/`warn`, never `query`)
+- [x] `JWT_ACCESS_SECRET` is read from environment variable, never hardcoded, no weak production fallback (startup fails closed if absent/too short)
+- [x] Access tokens are short-lived (15 min default); refresh tokens rotate on every use; revocation is server-side (`AuthSession.revokedAt`) — reuse of a used/revoked refresh token revokes the session immediately
+- [x] No token is ever stored in browser `localStorage`/`sessionStorage`/IndexedDB on any client — refresh token lives only in an HttpOnly cookie; access token is held in memory only
 
 ## Data Privacy (N/A until business data models exist)
 
 - [ ] No PII is exposed in any endpoint response
 - [ ] Pagination results are bounded to prevent full data dumps
 - [ ] Personal data is not logged in debug/error output
+- [x] `GET /auth/me` returns only `userId`/`displayName`/`roleCodes` — never `loginId`, `passwordHash`, session/token internals (AUTH-001)
 
-## Mobile Security (N/A until GPS/camera/evidence features exist)
+## Mobile Security (AUTH-001 partial — GPS/camera/evidence remain N/A)
 
-- [ ] `NEXT_PUBLIC_*` variables contain no secrets (they are bundled into the browser bundle)
-- [ ] API base URL uses HTTPS in production builds
-- [ ] No sensitive data stored in unencrypted client-side storage
-- [ ] Tokens (when introduced) use secure, non-`localStorage` storage on mobile/PWA
+- [x] `NEXT_PUBLIC_*` variables contain no secrets (they are bundled into the browser bundle)
+- [ ] API base URL uses HTTPS in production builds — deferred to production deployment milestone (local dev is HTTP by design)
+- [x] No sensitive data stored in unencrypted client-side storage — verified by unit tests asserting `localStorage.length === 0`/`sessionStorage.length === 0` after authenticated bootstrap
+- [x] Refresh token uses secure, non-`localStorage` storage (HttpOnly cookie) on both Admin Web and Mobile/PWA; no service worker exists in this repository to cache auth responses
 
 ## API Input Validation (N/A — no business endpoints yet)
 

@@ -38,6 +38,8 @@ jobs:
       # Schema-only placeholder — Prisma generate/validate never open a real
       # connection with it. No business/deploy step in this job uses it.
       DATABASE_URL: "postgresql://dispatch_user:ci_placeholder_not_a_real_secret@localhost:5432/dispatch?schema=public"
+      # Deterministic test-only secret (AUTH-001) — never a production value.
+      JWT_ACCESS_SECRET: "ci_test_only_jwt_access_secret_not_a_real_secret_value"
 
     steps:
       - name: Checkout repository
@@ -85,6 +87,10 @@ jobs:
       POSTGRES_USER: dispatch_user
       POSTGRES_PASSWORD: ci_postgres_password_do_not_use_in_production
       NEXT_PUBLIC_API_URL: http://localhost:6002
+      # Deterministic test-only secret (AUTH-001) — required by
+      # docker-compose.yml's ${JWT_ACCESS_SECRET:?...} for `docker compose
+      # config` to validate; never a production value.
+      JWT_ACCESS_SECRET: "ci_test_only_jwt_access_secret_not_a_real_secret_value"
 
     steps:
       - name: Checkout repository
@@ -125,6 +131,12 @@ jobs:
 
     env:
       DATABASE_URL: "postgresql://dispatch_ci_user:dispatch_ci_password_test_only@localhost:5432/dispatch_ci?schema=public"
+      # Deterministic test-only secret/limits (AUTH-001) — never production
+      # values. Generous rate limits avoid the auth e2e suite's many
+      # sequential /auth/login and /auth/refresh calls tripping throttling.
+      JWT_ACCESS_SECRET: "ci_test_only_jwt_access_secret_not_a_real_secret_value"
+      AUTH_LOGIN_RATE_LIMIT: "1000:60"
+      AUTH_REFRESH_RATE_LIMIT: "1000:60"
 
     services:
       postgres:
@@ -169,5 +181,14 @@ jobs:
       - name: Idempotent system-role seed
         run: npm run db:seed
 
-      - name: "Database integration tests (apps/api: test:integration, test:e2e)"
+      - name: "Database integration tests (apps/api: test:integration, test:e2e — includes AUTH-001 auth.integration-spec/auth.e2e-spec)"
         run: npm run test:integration --workspace=apps/api && npm run test:e2e --workspace=apps/api
+
+      - name: Confirm no default/automatically-created User exists
+        run: |
+          COUNT=$(PGPASSWORD=dispatch_ci_password_test_only psql -h localhost -U dispatch_ci_user -d dispatch_ci -tA -c "SELECT count(*) FROM users;")
+          echo "User count after test suite cleanup: ${COUNT}"
+          if [ "${COUNT}" != "0" ]; then
+            echo "::error::Expected 0 Users after test cleanup, found ${COUNT}"
+            exit 1
+          fi

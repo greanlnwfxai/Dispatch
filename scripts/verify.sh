@@ -74,6 +74,26 @@ info "Validating docker compose config (no containers started)..."
 docker compose config >/dev/null
 pass "docker compose config valid"
 
+info "Scanning client source for token-storage prohibition (AUTH-001)..."
+# Matches actual write calls, not bare mentions — the frontend test suites
+# legitimately assert `localStorage.length === 0` (a read) to prove tokens
+# are NOT persisted, so a bare-identifier grep would false-positive on the
+# tests that guard this exact rule. Excludes test files/dirs and the
+# scanner itself.
+TOKEN_STORAGE_PATTERN='(localStorage|sessionStorage)\.(setItem|removeItem)\(|indexedDB\.open\('
+TOKEN_STORAGE_FINDINGS="$(grep -rnE "$TOKEN_STORAGE_PATTERN" \
+  --include="*.ts" --include="*.tsx" \
+  --exclude="*.test.ts" --exclude="*.test.tsx" --exclude="*.spec.ts" \
+  --exclude-dir="__tests__" --exclude-dir="node_modules" --exclude-dir=".next" \
+  --exclude-dir="dist" --exclude-dir="coverage" \
+  apps/admin-web/src apps/mobile-pwa/src 2>/dev/null || true)"
+if [ -n "$TOKEN_STORAGE_FINDINGS" ]; then
+  fail "Found client-side token-storage write(s) — access/refresh tokens must never be persisted to localStorage/sessionStorage/IndexedDB:"
+  echo "$TOKEN_STORAGE_FINDINGS"
+  exit 1
+fi
+pass "No client-side localStorage/sessionStorage/IndexedDB token-storage writes found"
+
 echo "=============================================="
 pass "ALL CHECKS PASSED"
 echo "=============================================="

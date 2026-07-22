@@ -99,6 +99,39 @@ if [ "$(echo "$READY" | jq -c .)" != "$(echo "$HEALTH" | jq -c .)" ]; then
 fi
 pass "GET /health/ready returned HTTP 200 with the expected readiness body"
 
+info "GET ${API}/auth/me without an access token (expect HTTP 401, no auth endpoint leaks internals)..."
+AUTH_ME_HTTP_STATUS="$(curl -s -o /tmp/dispatch-auth-me-response.json -w '%{http_code}' "${API}/auth/me")"
+if [ "$AUTH_ME_HTTP_STATUS" != "401" ]; then
+  fail "GET /auth/me without a token returned HTTP ${AUTH_ME_HTTP_STATUS}, expected 401"
+  exit 1
+fi
+AUTH_ME_BODY="$(cat /tmp/dispatch-auth-me-response.json)"
+rm -f /tmp/dispatch-auth-me-response.json
+pass "GET /auth/me without a token returned HTTP 401"
+
+if echo "$AUTH_ME_BODY" | grep -qiE "stack|prisma|postgres|at Object\.|node_modules"; then
+  fail "GET /auth/me error response leaked internal details: ${AUTH_ME_BODY}"
+  exit 1
+fi
+pass "GET /auth/me error response contains no stack trace or connection detail"
+
+info "POST ${API}/auth/login with an unknown loginId (expect HTTP 401, generic body, no leak)..."
+LOGIN_HTTP_STATUS="$(curl -s -o /tmp/dispatch-login-response.json -w '%{http_code}' \
+  -X POST -H 'Content-Type: application/json' \
+  -d '{"loginId":"smoke-test-nonexistent-user","password":"smoke-test-password-1234"}' \
+  "${API}/auth/login")"
+if [ "$LOGIN_HTTP_STATUS" != "401" ]; then
+  fail "POST /auth/login with an unknown loginId returned HTTP ${LOGIN_HTTP_STATUS}, expected 401"
+  exit 1
+fi
+LOGIN_BODY="$(cat /tmp/dispatch-login-response.json)"
+rm -f /tmp/dispatch-login-response.json
+if echo "$LOGIN_BODY" | grep -qiE "stack|prisma|postgres|at Object\.|node_modules"; then
+  fail "POST /auth/login error response leaked internal details: ${LOGIN_BODY}"
+  exit 1
+fi
+pass "POST /auth/login returns a generic HTTP 401 with no internal detail leaked"
+
 echo "=============================================="
 pass "API SMOKE TEST PASSED"
 echo "=============================================="

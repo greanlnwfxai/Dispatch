@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { AuthProvider } from "./auth-context";
 
 export const metadata: Metadata = {
   title: "Dispatch Admin Web",
-  description: "Dispatch Admin Web — repository and tooling foundation (DEV-FOUNDATION-001).",
+  description: "Dispatch Admin Web — authentication foundation (AUTH-001).",
 };
 
 export default function RootLayout({
@@ -13,7 +14,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className="min-h-screen bg-slate-50 text-slate-900 antialiased">{children}</body>
+      <body className="min-h-screen bg-slate-50 text-slate-900 antialiased">
+        <AuthProvider>{children}</AuthProvider>
+      </body>
     </html>
   );
 }
