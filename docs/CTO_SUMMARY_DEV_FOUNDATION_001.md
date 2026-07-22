@@ -10,6 +10,20 @@ DEV-FOUNDATION-001 — Repository and Tooling Foundation
 > history was changed by this amendment. See the "Governance and Safety
 > Confirmation" section below for the complete DEV-FOUNDATION-001A report.
 
+> **Amended 2026-07-22 by DEV-FOUNDATION-001B** (Fix Clean-CI Workspace
+> Dependency Ordering) — the first push of the commit reported PASS below
+> (`cf4c8f6`) failed on GitHub Actions run **29882143366** during
+> `Build, Lint, Typecheck, Test` → `Typecheck (all workspaces)`, because a
+> clean `npm ci` checkout has no `packages/*/dist` and the shared packages'
+> `main`/`types` fields point at `./dist`. Local verification had not
+> caught this because locally-generated `dist`/`.next` directories already
+> existed on the development machine. This amendment records the confirmed
+> root cause and the fix (deterministic `build:packages` step run before
+> any workspace command that resolves compiled package entry points). No
+> business workflow, business rule, or Git history was touched. See the
+> "CI Follow-up (DEV-FOUNDATION-001B)" section below for the complete
+> report.
+
 ## Status (PASS / FAIL)
 PASS
 
@@ -172,7 +186,192 @@ PASS
 - **No Open Business Decision Register item was resolved.** BDR-RETURN-007, BDR-RETURN-009, and all other open BDRs referenced in Topic 11 §23 remain untouched and unresolved by this synchronization pass.
 - **No Git mutation was performed.** No `git add`, `git commit`, `git push`, `git tag`, `git merge`, or history rewrite was run. Only read-only inspection commands (`git status`, `git diff`, `git ls-files`) were used.
 - **No destructive Docker command was performed.** The stack was already running at the start of this task and was left running; only read-only/non-destructive commands were used (`docker compose ps`, `docker compose config`). No `docker compose down`, `docker system prune`, volume/container/image/network removal, or any teardown command was executed.
-- **Remote GitHub Actions status: NOT YET RUN.** Unchanged from the original report — this workflow has not executed on GitHub and will only run once the user pushes; this cannot be known or claimed from this environment.
+- **Remote GitHub Actions status at DEV-FOUNDATION-001A completion:** `NOT YET RUN` at that time. After commit `cf4c8f6` was pushed, GitHub Actions run `29882143366` executed and failed at `Typecheck (all workspaces)`. See the DEV-FOUNDATION-001B CI Follow-up below. The corrected DEV-FOUNDATION-001B workflow remains `NOT YET RUN` because this fix has not yet been pushed.
+
+## CI Follow-up (DEV-FOUNDATION-001B — 2026-07-22)
+
+### Failed run
+GitHub Actions run **29882143366**, triggered by the push of `cf4c8f6`
+(`feat(dispatch): add repository and tooling foundation`).
+
+### Failure stage
+Job `Build, Lint, Typecheck, Test` → step `Typecheck (all workspaces)`
+(`npm run typecheck`). `Compose — Config Validation` and
+`Security — Audit & Secret Scan` both passed on that same run.
+
+### Exact module-resolution symptoms
+```
+src/index.ts(11,37): error TS2307: Cannot find module '@dispatch/shared-types' or its corresponding type declarations.
+src/index.ts(11,58): error TS2307: Cannot find module '@dispatch/shared-types' or its corresponding type declarations.
+src/health/health.controller.ts(2,37): error TS2307: Cannot find module '@dispatch/shared-types' or its corresponding type declarations.
+src/health/health.service.ts(2,37): error TS2307: Cannot find module '@dispatch/shared-types' or its corresponding type declarations.
+src/app/page.tsx(1,32): error TS2307: Cannot find module '@dispatch/contracts' or its corresponding type declarations.
+```
+raised in `packages/contracts`, `packages/test-utils`, `apps/api`,
+`apps/admin-web`, and `apps/mobile-pwa` — every workspace that imports a
+sibling shared package (`@dispatch/shared-types` and/or
+`@dispatch/contracts`), including a shared package (`@dispatch/contracts`)
+importing another shared package (`@dispatch/shared-types`).
+
+### Confirmed root cause
+Confirmed against the actual repository, not assumed:
+- `packages/shared-types|domain|validation|contracts|test-utils/package.json`
+  each declare `"main": "./dist/index.js"` and `"types": "./dist/index.d.ts"`
+  — TypeScript resolves the sibling-package import through those fields.
+- `dist/` is listed in root `.gitignore` (`dist/` on line 21, plus
+  `apps/api/dist/` on line 32) — it is never committed and does not exist
+  on a fresh `git clone` + `npm ci`.
+- `scripts/verify.sh` and `.github/workflows/ci.yml` both ran
+  `npm run typecheck` (and `npm run test`) **before** `npm run build`, so
+  on a clean checkout the compiled `dist/index.d.ts`/`dist/index.js` files
+  that satisfy those imports had never been produced yet.
+- Reproduced locally: after removing all locally-generated
+  `packages/*/dist`, `apps/api/dist`, `apps/admin-web/.next`,
+  `apps/mobile-pwa/.next`, and `*.tsbuildinfo` files (all confirmed
+  git-ignored via `git check-ignore -v`) and running the bare root
+  `npm run typecheck`, the exact same `TS2307` errors reproduced,
+  workspace-for-workspace, against the CI log.
+- Also reproduced for `npm run test`: Vitest failed with
+  `Failed to resolve entry for package "@dispatch/contracts"` in both
+  `apps/admin-web` and `apps/mobile-pwa` from the same artifact-free
+  state, because Node/Vite module resolution needs the same `main`/`types`
+  entry points at **runtime**, not only for type-checking. `npm run lint`
+  was verified to **not** need `dist` (ESLint's `typescript-eslint`
+  config here uses the non-type-checked `recommended` rule set with no
+  import-resolution plugin, so it passed from the same clean state).
+
+### Why local verification originally masked the defect
+The macOS development machine that produced the original DEV-FOUNDATION-001
+PASS had already run `npm run build` (and `next build`) multiple times
+during iterative development, so `packages/*/dist`, `apps/api/dist`, and
+`apps/*/.next` already existed on disk before `./scripts/verify.sh` was
+ever run start-to-finish. `verify.sh`'s lint→typecheck→test→build ordering
+therefore always found pre-existing compiled entry points for the shared
+packages, even though the script itself never explicitly produced them
+before typecheck/test. A GitHub Actions runner starts from a bare `git
+clone` + `npm ci` with no such residue, which is what exposed the gap.
+This is a genuine ordering defect in the verification scripts, not a
+flaw in the original local PASS report — the original report was accurate
+for the state it was run against.
+
+### Files changed
+- `package.json` — `typecheck` and `test` scripts now run
+  `npm run build:packages` first (`&&`); `build` now calls `build:packages`
+  instead of repeating its workspace list inline. `build:packages` itself
+  (pre-existing) and `lint` are unchanged.
+- `scripts/verify.sh` — added an explicit "Preparing shared workspace
+  packages" step (`npm run build:packages`) between the workspace
+  consistency check and lint, plus an updated header comment.
+- `.github/workflows/ci.yml` — added a "Prepare shared workspace packages"
+  step (`npm run build:packages`) in the `build-and-test` job, immediately
+  after `npm ci` and before `Lint (all workspaces)`.
+
+The implementation/configuration correction modified exactly three files: `package.json`, `scripts/verify.sh`, and `.github/workflows/ci.yml`. This CTO Summary is the fourth modified file because it records the post-push finding and correction. No `dist`/`.next` output is committed or intended for commit (still fully git-ignored).
+
+### Corrected prerequisite ordering
+1. `npm ci`
+2. `npm run build:packages` (`packages/shared-types`, `packages/domain`,
+   `packages/validation`, `packages/contracts`, `packages/test-utils`, in
+   that order — `shared-types` first, since `contracts` and `test-utils`
+   depend on it)
+3. `npm run lint` (does not require step 2, but runs after it in both
+   `verify.sh` and CI for a consistent, easy-to-read sequence)
+4. `npm run typecheck` (self-prepares via `build:packages` even if invoked
+   directly, not only through `verify.sh`/CI)
+5. `npm run test` (same self-preparation, needed because Vitest/Jest
+   resolve `@dispatch/*` imports at runtime, not only at type-check time)
+6. `npm run build` (packages, then `apps/api`, `apps/admin-web`,
+   `apps/mobile-pwa`)
+
+The package list and build command live in exactly one place
+(`build:packages`); `verify.sh` and CI both just invoke it, and
+`typecheck`/`test` invoke it internally, so the ordering rule is not
+duplicated as a separate list anywhere.
+
+### Clean-room regression result
+From an artifact-free state (`packages/*/dist`, `apps/api/dist`,
+`apps/admin-web/.next`, `apps/mobile-pwa/.next`, and all `*.tsbuildinfo`
+files removed — every path confirmed git-ignored/reproducible first via
+`git check-ignore -v`, no source, config, `node_modules`, or Docker state
+touched):
+- **Before the fix**: `npm run lint` → PASS; `npm run typecheck` → FAIL
+  (exact `TS2307` errors matching the CI log); `npm run test` → FAIL
+  (Vitest `Failed to resolve entry for package "@dispatch/contracts"` in
+  `apps/admin-web` and `apps/mobile-pwa`).
+- **After the fix**, run in order from the same artifact-free state:
+  `npm run lint` → **PASS**; `npm run typecheck` → **PASS** (self-prepares
+  `packages/*/dist`, confirmed `shared-types` builds before `contracts`
+  typechecks it); `npm run test` → **PASS** (all workspaces, including
+  `apps/admin-web`/`apps/mobile-pwa` Vitest suites that previously failed
+  to resolve `@dispatch/contracts`); `npm run build` → **PASS** (all 8
+  workspaces, including both Next.js production builds).
+- This confirms the fix is durable and represented in the scripted
+  prerequisite ordering itself — Typecheck did not merely succeed because
+  of a leftover full build from a prior manual step.
+
+### Local verification result
+`./scripts/verify.sh` → **PASS** (workspace consistency, prepare shared
+packages, lint, typecheck, unit/foundation tests, build of all 8
+workspaces, `docker compose config`), re-run after the clean-room
+regression check, on top of the fix.
+- `./scripts/api-smoke-test.sh` → **PASS**
+- `./scripts/mobile-verify.sh` → **PASS**
+- `./scripts/e2e-test.sh` → **PASS** (against the already-running stack;
+  all 3 Playwright tests passed: Admin Web reachable/marker, Mobile/PWA
+  reachable/marker, API health body)
+- `npm ls --workspaces --all` → exit 0; only `UNMET OPTIONAL DEPENDENCY`
+  entries, all expected platform-specific native-binary optionals (e.g.
+  `@esbuild/*`, `@rollup/rollup-*`, `@tailwindcss/oxide-*`,
+  `lightningcss-*`, `@img/sharp-*` for OS/arch combinations other than the
+  current macOS arm64 host) — no non-optional unmet or invalid entries
+- `npm ls typescript next @nestjs/core vitest` → `typescript@5.9.3`
+  (overridden, deduped everywhere), `next@16.2.11`, `@nestjs/core@11.1.28`,
+  `vitest@4.1.10` — no conflicting versions
+- `bash -n` on all 9 `scripts/*.sh` → all syntactically valid
+- `git status --short --untracked-files=all` → exactly four intended files modified: `package.json`, `scripts/verify.sh`, `.github/workflows/ci.yml`, and `docs/CTO_SUMMARY_DEV_FOUNDATION_001.md`; no untracked files
+- `git diff --check` → clean (no trailing whitespace, no conflict markers)
+- `package.json` parses as valid JSON; `.github/workflows/ci.yml` parses
+  as valid YAML
+
+### Security result
+`./scripts/security-review.sh` → **PASS** (dependency audit: 0
+HIGH/CRITICAL; secret scan: 0 findings; `docker compose config` valid; no
+destructive Docker commands found in `scripts/*.sh`). No new dependency was
+added by this fix — only script/workflow ordering changed.
+
+### Docker status
+The stack (`db`, `api`, `admin-web`, `mobile-pwa`) was already running at
+the start of this task and was left running throughout — `db` and `api`
+report Docker healthcheck status `healthy`; `admin-web` and `mobile-pwa`
+were verified through HTTP reachability. No `docker compose down`, no
+volume/container/image/network removal, and no other destructive Docker
+command was run at any point.
+
+### Remote GitHub Actions status
+**NOT YET RUN.** This fix has not been pushed. The only remote run
+evaluated is the prior failing run 29882143366; the corrected workflow's
+outcome cannot be known or claimed until the user pushes and reports the
+result.
+
+### Non-blocking follow-up (recorded, not fixed here)
+CI logs for `actions/checkout` and `actions/setup-node` carry a Node.js
+action-runtime deprecation warning. This is unrelated to the Typecheck
+failure investigated here (confirmed: the failure was a `TS2307` module
+resolution error, not an actions-runtime error) and is out of scope for
+this hotfix per the task instructions. Recorded as separate remaining
+technical debt: a future task should bump `actions/checkout`/
+`actions/setup-node` to their current major versions.
+
+### Git scope
+No Git mutation was performed — no `git add`, `git commit`, `git push`,
+`git tag`, `git merge`, or history rewrite. Only read-only inspection
+(`git status`, `git diff`, `git log`, `gh run view --log-failed`) was used.
+All four changed files remain uncommitted, for the user to review and commit manually.
+
+### Recommended commit message (DEV-FOUNDATION-001B)
+```
+fix(dispatch): prepare workspace packages before typecheck
+```
 
 ## Remaining Work
 Everything explicitly out of scope for this task remains undone, per the

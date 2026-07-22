@@ -4,12 +4,19 @@ set -euo pipefail
 # ─────────────────────────────────────────────────────────────────────────────
 # verify.sh — local foundation verification (DEV-FOUNDATION-001)
 #   1. npm workspace dependency consistency (npm ls, non-mutating)
-#   2. lint (all workspaces)
-#   3. typecheck (all workspaces)
-#   4. unit/foundation tests (all workspaces)
-#   5. build (packages/*, then apps/api, apps/admin-web, apps/mobile-pwa)
-#   6. docker compose config validation (no containers started)
+#   2. prepare shared workspace packages (npm run build:packages) — required
+#      on a clean checkout because packages/* main/types point at ./dist
+#      (gitignored); app typecheck/test resolve those compiled entry points
+#   3. lint (all workspaces)
+#   4. typecheck (all workspaces)
+#   5. unit/foundation tests (all workspaces)
+#   6. build (packages/*, then apps/api, apps/admin-web, apps/mobile-pwa)
+#   7. docker compose config validation (no containers started)
 # Exits non-zero on the first failure.
+#
+# Note: root `npm run typecheck` and `npm run test` also self-prepare via
+# `build:packages` (see package.json), so they are correct even when run
+# directly, not only through this script.
 # ─────────────────────────────────────────────────────────────────────────────
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -28,6 +35,10 @@ echo "=============================================="
 info "Checking npm workspace dependency consistency..."
 npm ls --workspaces --omit=dev >/dev/null 2>&1 || npm ls --workspaces >/dev/null
 pass "Workspace dependency tree resolves"
+
+info "Preparing shared workspace packages (packages/* dist, consumed by app typecheck/test)..."
+npm run build:packages
+pass "Shared workspace packages prepared"
 
 info "Running lint (all workspaces)..."
 npm run lint

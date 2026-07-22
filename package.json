@@ -19,11 +19,11 @@
     "e2e"
   ],
   "scripts": {
-    "build": "npm run build --workspace=packages/shared-types --workspace=packages/domain --workspace=packages/validation --workspace=packages/contracts --workspace=packages/test-utils && npm run build --workspace=apps/api --workspace=apps/admin-web --workspace=apps/mobile-pwa",
+    "build": "npm run build:packages && npm run build --workspace=apps/api --workspace=apps/admin-web --workspace=apps/mobile-pwa",
     "build:packages": "npm run build --workspace=packages/shared-types --workspace=packages/domain --workspace=packages/validation --workspace=packages/contracts --workspace=packages/test-utils",
     "lint": "npm run lint --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run build:packages && npm run typecheck --workspaces --if-present",
+    "test": "npm run build:packages && npm run test --workspaces --if-present",
     "verify": "./scripts/verify.sh",
     "docker:verify": "./scripts/docker-verify.sh",
     "smoke:api": "./scripts/api-smoke-test.sh",

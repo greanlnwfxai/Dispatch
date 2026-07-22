@@ -47,6 +47,9 @@ jobs:
       - name: Install dependencies (npm workspaces)
         run: npm ci
 
+      - name: Prepare shared workspace packages (build packages/* before app typecheck/test)
+        run: npm run build:packages
+
       - name: Lint (all workspaces)
         run: npm run lint
 
