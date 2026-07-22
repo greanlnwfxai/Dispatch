@@ -1,0 +1,47 @@
+{
+  "name": "dispatch",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Dispatch — delivery task tracking and control system for STEP-SOLUTIONS (DEV-FOUNDATION-001: repository and tooling foundation only, no business workflows).",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22.0.0 <23.0.0"
+  },
+  "workspaces": [
+    "packages/shared-types",
+    "packages/domain",
+    "packages/validation",
+    "packages/contracts",
+    "packages/test-utils",
+    "apps/api",
+    "apps/admin-web",
+    "apps/mobile-pwa",
+    "e2e"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace=packages/shared-types --workspace=packages/domain --workspace=packages/validation --workspace=packages/contracts --workspace=packages/test-utils && npm run build --workspace=apps/api --workspace=apps/admin-web --workspace=apps/mobile-pwa",
+    "build:packages": "npm run build --workspace=packages/shared-types --workspace=packages/domain --workspace=packages/validation --workspace=packages/contracts --workspace=packages/test-utils",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "verify": "./scripts/verify.sh",
+    "docker:verify": "./scripts/docker-verify.sh",
+    "smoke:api": "./scripts/api-smoke-test.sh",
+    "verify:mobile": "./scripts/mobile-verify.sh",
+    "security:review": "./scripts/security-review.sh",
+    "security:audit": "./scripts/security-audit.sh",
+    "secret:scan": "./scripts/secret-scan.sh",
+    "e2e:local": "./scripts/e2e-local.sh",
+    "e2e:test": "./scripts/e2e-test.sh"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "eslint": "9.39.5",
+    "typescript-eslint": "^8.65.0"
+  },
+  "overrides": {
+    "sharp": "^0.35.3",
+    "postcss": "^8.5.21",
+    "typescript": "5.9.3"
+  }
+}

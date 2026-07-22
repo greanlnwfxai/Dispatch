@@ -14,3 +14,34 @@
 
 # Obsidian vault-local settings
 Dispatch Knowledge/.obsidian/
+
+# Node / npm workspaces
+node_modules/
+npm-debug.log*
+dist/
+build/
+coverage/
+
+# Next.js
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+
+# NestJS
+apps/api/dist/
+
+# Env files (never commit real secrets)
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Playwright
+playwright-report/
+test-results/
+apps/*/playwright-report/
+apps/*/test-results/
+
+# Logs
+*.log

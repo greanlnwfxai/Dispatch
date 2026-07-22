@@ -1,0 +1,36 @@
+{
+  "name": "@dispatch/admin-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Dispatch Admin Web — Next.js + React + TailwindCSS foundation (DEV-FOUNDATION-001: foundation status page only, no login, no business workflow).",
+  "license": "UNLICENSED",
+  "scripts": {
+    "dev": "next dev -p 6001",
+    "build": "next build",
+    "start": "next start -p 6001",
+    "lint": "eslint .",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@dispatch/contracts": "*",
+    "@dispatch/shared-types": "*",
+    "next": "16.2.11",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@testing-library/react": "^16.0.1",
+    "@types/node": "^22.9.0",
+    "@types/react": "^19.0.1",
+    "@types/react-dom": "^19.0.2",
+    "@vitejs/plugin-react": "^4.3.4",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.2.11",
+    "jsdom": "^25.0.1",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.6.3",
+    "vitest": "^4.1.10"
+  }
+}

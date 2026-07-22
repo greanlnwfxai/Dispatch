@@ -1,0 +1,19 @@
+{
+  "name": "@dispatch/shared-types",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Foundation-level shared TypeScript types for Dispatch (service identifiers, health contract). No business rules.",
+  "license": "UNLICENSED",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "lint": "eslint src"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vitest": "^4.1.10"
+  }
+}

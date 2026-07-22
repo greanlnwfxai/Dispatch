@@ -1,0 +1,101 @@
+name: Dispatch CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel in-progress runs on the same branch/PR to save runner minutes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# ── Scope note (DEV-FOUNDATION-001) ─────────────────────────────────────────
+# This workflow runs deterministic, non-Docker checks: lint, typecheck,
+# unit/foundation tests, and production builds for every workspace, plus the
+# security review (dependency audit + secret scan) and a docker-compose
+# config validation (no containers are built or started in CI).
+#
+# Full Docker build/start/health verification (docker-verify.sh) and the
+# Playwright E2E suite (e2e-local.sh / e2e-test.sh) are required LOCAL gates
+# per CLAUDE.md, run by a human or Claude before declaring a task PASS — they
+# are not run in this workflow to keep initial CI fast and reliable. This is
+# an explicit, documented scope decision, not an oversight.
+
+jobs:
+  # ── Build, Lint, Typecheck, Test — all workspaces ───────────────────────────
+  build-and-test:
+    name: Build, Lint, Typecheck, Test
+    runs-on: ubuntu-latest
+
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      NEXT_PUBLIC_API_URL: http://localhost:6002
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies (npm workspaces)
+        run: npm ci
+
+      - name: Lint (all workspaces)
+        run: npm run lint
+
+      - name: Typecheck (all workspaces)
+        run: npm run typecheck
+
+      - name: Unit/foundation tests (all workspaces)
+        run: npm run test
+
+      - name: Build packages/* then apps/api, apps/admin-web, apps/mobile-pwa
+        run: npm run build
+
+  # ── Compose — Config Validation ─────────────────────────────────────────────
+  # Validates docker-compose.yml renders correctly. Does NOT build images or
+  # start containers — that is docker-verify.sh, a required local gate.
+  compose-config:
+    name: Compose — Config Validation
+    runs-on: ubuntu-latest
+
+    env:
+      POSTGRES_DB: dispatch
+      POSTGRES_USER: dispatch_user
+      POSTGRES_PASSWORD: ci_postgres_password_do_not_use_in_production
+      NEXT_PUBLIC_API_URL: http://localhost:6002
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate docker-compose.yml
+        run: docker compose config
+
+  # ── Security — Audit & Secret Scan ──────────────────────────────────────────
+  security-ci:
+    name: Security — Audit & Secret Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies (npm workspaces)
+        run: npm ci
+
+      - name: Run security review (audit + secret scan)
+        run: ./scripts/security-audit.sh && ./scripts/secret-scan.sh

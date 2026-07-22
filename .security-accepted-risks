@@ -1,0 +1,21 @@
+# Security Accepted-Risk Registry
+#
+# Format: GHSA_ID  WORKSPACE  DATE  REASON
+# One entry per line. Lines starting with # are comments.
+# Workspace: api | admin-web | mobile-pwa | packages | all
+#
+# An advisory listed here is ACCEPTED RISK — it will not fail security-audit.sh.
+# All accepted risks must have a corresponding entry in docs/SECURITY_REVIEW_LOG.md.
+#
+# ── HOW TO ADD A NEW ENTRY ───────────────────────────────────────────────────
+# 1. Understand the vulnerability and confirm it is not reachable in production.
+# 2. Add the entry below with a clear reason.
+# 3. Add a full accepted-risk entry in docs/SECURITY_REVIEW_LOG.md.
+# 4. Get user approval before committing.
+#
+# ── REVIEW SCHEDULE ─────────────────────────────────────────────────────────
+# Review all accepted risks whenever the relevant package has a safe patch
+# available, or at minimum once per milestone.
+#
+# No entries as of DEV-FOUNDATION-001 — every HIGH/CRITICAL finding during
+# foundation setup was patched, not accepted. See docs/SECURITY_REVIEW_LOG.md.

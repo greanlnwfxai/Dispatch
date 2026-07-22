@@ -1,0 +1,22 @@
+{
+  "name": "@dispatch/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared foundation-level API contracts for Dispatch (health endpoint only in DEV-FOUNDATION-001). No Command/Query DTOs for business workflows yet.",
+  "license": "UNLICENSED",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "lint": "eslint src"
+  },
+  "dependencies": {
+    "@dispatch/shared-types": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vitest": "^4.1.10"
+  }
+}

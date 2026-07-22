@@ -1,0 +1,13 @@
+{
+  "name": "@dispatch/e2e",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Dispatch foundation Playwright E2E suite (DEV-FOUNDATION-001: reachability only — no business scenario tests).",
+  "license": "UNLICENSED",
+  "scripts": {
+    "test:e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.1"
+  }
+}
