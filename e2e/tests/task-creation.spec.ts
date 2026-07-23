@@ -5,8 +5,8 @@ import * as path from "node:path";
 import { expect, test } from "@playwright/test";
 
 /**
- * MVP-02 — Task creation flow (Admin Web). Login uses a test-scoped
- * Dispatcher account only, never the real operator password. Fixture
+ * MVP-03 — Task creation and preparation flow (Admin Web). Login uses a
+ * test-scoped Admin account only, never the real operator password. Fixture
  * setup/teardown runs inside the `api` container (see
  * e2e/scripts/*.cjs) because PostgreSQL has no host port mapping — the
  * Playwright process itself never needs direct database access.
@@ -28,8 +28,8 @@ function runFixtureScript(scriptFile: string, env: Record<string, string>): stri
   return execFileSync("docker", args, { cwd: REPO_ROOT, input: script, encoding: "utf8" }).trim();
 }
 
-test.describe("MVP-02 — Task creation flow", () => {
-  const marker = `mvp02-pw-${randomUUID()}`;
+test.describe("MVP-03 — Task preparation flow", () => {
+  const marker = `mvp03-pw-${randomUUID()}`;
   const loginId = `e2e-pw-${randomUUID()}`;
   let userId = "";
   let customerId = "";
@@ -39,6 +39,7 @@ test.describe("MVP-02 — Task creation flow", () => {
       FIXTURE_MARKER: marker,
       FIXTURE_LOGIN_ID: loginId,
       FIXTURE_PASSWORD: PASSWORD,
+      FIXTURE_ROLE_CODE: "ADMIN",
     });
     const parsed = JSON.parse(output) as { userId: string; customerId: string };
     userId = parsed.userId;
@@ -53,7 +54,7 @@ test.describe("MVP-02 — Task creation flow", () => {
     });
   });
 
-  test("creates a DRAFT, submits it, and the detail page shows the frozen snapshot with no Preparation/Assignment action", async ({
+  test("creates a Task, prepares goods with photo evidence, and confirms READY_FOR_DISPATCH without Assignment scope", async ({
     page,
   }) => {
     await page.goto(`${ADMIN_WEB_URL}/login`);
@@ -81,16 +82,35 @@ test.describe("MVP-02 — Task creation flow", () => {
     await expect(page.getByText("สถานะ: DRAFT")).toBeVisible();
 
     page.once("dialog", (dialog) => void dialog.accept());
-    await page.getByRole("button", { name: "ส่งงาน (Submit)" }).click();
+    await page.getByRole("button", { name: "ส่งงาน" }).click();
     await expect(page.getByText("สถานะ: WAITING_PREPARATION")).toBeVisible();
 
     // Historical Destination Snapshot remains visible after submission.
     await expect(page.getByText(`${marker}-destination`)).toBeVisible();
     await expect(page.getByText("123 Playwright Test Rd.")).toBeVisible();
 
-    // No Preparation/Assignment/Delivery action appears anywhere (MVP-02 scope exclusions).
-    await expect(page.getByRole("button", { name: /จัดเตรียม|มอบหมาย/ })).toHaveCount(0);
-    await expect(page.getByRole("link", { name: /จัดเตรียม|มอบหมาย/ })).toHaveCount(0);
+    await page.getByRole("button", { name: "เริ่มเตรียมสินค้า" }).click();
+    await expect(page.getByText("สถานะ: PREPARING")).toBeVisible();
+    await page.getByLabel("prepared-1").fill("5");
+    await page.getByLabel("note-1").fill("prepared in browser e2e");
+    await page.getByRole("button", { name: "บันทึกจำนวนที่เตรียม" }).click();
+
+    const pngBytes = Buffer.from("89504e470d0a1a0a0000000d49484452", "hex");
+    await page.locator('input[type="file"]').setInputFiles({
+      name: "loading.png",
+      mimeType: "image/png",
+      buffer: pngBytes,
+    });
+    await page.getByRole("button", { name: "อัปโหลดรูป" }).click();
+    await expect(page.getByRole("button", { name: /เปิดรูป loading\.png/ })).toBeVisible();
+
+    page.once("dialog", (dialog) => void dialog.accept());
+    await page.getByRole("button", { name: "ยืนยันพร้อมจัดส่ง" }).click();
+    await expect(page.getByText("สถานะ: READY_FOR_DISPATCH")).toBeVisible();
+
+    // Assignment/Delivery scope remains excluded in MVP-03.
+    await expect(page.getByRole("button", { name: /มอบหมาย/ })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: /มอบหมาย/ })).toHaveCount(0);
     // No delete action ever exists.
     await expect(page.getByRole("button", { name: /ลบงาน|delete task/i })).toHaveCount(0);
   });

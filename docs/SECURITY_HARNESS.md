@@ -120,6 +120,26 @@ scan for client-side token-storage writes (`localStorage.setItem`,
 legitimately assert the absence of such writes via read-only
 `.length === 0` checks).
 
+## MVP-03 Evidence Review Scope
+
+MVP-03 adds private pre-loading photo evidence. Automated coverage now also
+includes API e2e checks for valid upload, MIME/magic-byte mismatch rejection,
+authenticated private retrieval, checksum metadata, and zero residue in the
+development evidence volume after test cleanup. Manual security review must
+still inspect:
+
+- no public evidence host port, bucket policy, object URL, or signed URL leak;
+- object-key opacity and path-traversal rejection;
+- multipart file/field/part limits;
+- response-header filename sanitization and `Cache-Control: private, no-store`;
+- exact-object compensating cleanup only, never bucket-wide cleanup;
+- no browser storage persistence of customer/preparation/evidence data.
+
+The current local implementation is a filesystem-backed development adapter
+mounted on the `dispatch_evidence_data` Docker named volume. Production
+storage remains targeted at private S3-compatible object storage behind the
+same API boundary.
+
 ---
 
 ## Future Security Enhancements

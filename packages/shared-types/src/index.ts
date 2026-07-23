@@ -107,3 +107,41 @@ export type FreeTextFallbackReason = (typeof FREE_TEXT_FALLBACK_REASON_CODES)[nu
 export function isFreeTextFallbackReason(value: string): value is FreeTextFallbackReason {
   return (FREE_TEXT_FALLBACK_REASON_CODES as readonly string[]).includes(value);
 }
+
+/**
+ * MVP-03 — Preparation and pre-loading evidence. These enums model only
+ * the preparation scope approved for this milestone; delivery-attempt,
+ * handover, GPS, signature, and return evidence categories are intentionally
+ * absent from MVP-03 UI/API behavior.
+ */
+export const PREPARATION_ISSUE_STATUS_CODES = ["OPEN", "RESOLVED"] as const;
+
+export type PreparationIssueStatus = (typeof PREPARATION_ISSUE_STATUS_CODES)[number];
+
+export function isPreparationIssueStatus(value: string): value is PreparationIssueStatus {
+  return (PREPARATION_ISSUE_STATUS_CODES as readonly string[]).includes(value);
+}
+
+export const PREPARATION_EVIDENCE_CATEGORY_CODES = ["PRE_LOADING_PHOTO"] as const;
+
+export type PreparationEvidenceCategory = (typeof PREPARATION_EVIDENCE_CATEGORY_CODES)[number];
+
+export function isPreparationEvidenceCategory(value: string): value is PreparationEvidenceCategory {
+  return (PREPARATION_EVIDENCE_CATEGORY_CODES as readonly string[]).includes(value);
+}
+
+export const PREPARATION_CORRECTION_MATERIALITY_CODES = ["NORMAL", "MATERIAL"] as const;
+
+export type PreparationCorrectionMateriality = (typeof PREPARATION_CORRECTION_MATERIALITY_CODES)[number];
+
+export function isPreparationCorrectionMateriality(value: string): value is PreparationCorrectionMateriality {
+  return (PREPARATION_CORRECTION_MATERIALITY_CODES as readonly string[]).includes(value);
+}
+
+export const PREPARATION_CORRECTION_REVIEW_STATUS_CODES = ["PENDING_REVIEW", "REVIEWED"] as const;
+
+export type PreparationCorrectionReviewStatus = (typeof PREPARATION_CORRECTION_REVIEW_STATUS_CODES)[number];
+
+export function isPreparationCorrectionReviewStatus(value: string): value is PreparationCorrectionReviewStatus {
+  return (PREPARATION_CORRECTION_REVIEW_STATUS_CODES as readonly string[]).includes(value);
+}

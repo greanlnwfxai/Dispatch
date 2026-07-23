@@ -5,7 +5,7 @@
  * the api image's own `node_modules` (@prisma/client, @node-rs/argon2) —
  * no new dependency is added to any workspace for this.
  *
- * Creates exactly one test-scoped Dispatcher User + Customer Master
+ * Creates exactly one test-scoped User + Customer Master
  * fixture. Never touches the real operator account or existing data.
  * Prints the created ids as JSON on the last stdout line.
  */
@@ -16,13 +16,14 @@ async function main() {
   const marker = process.env.FIXTURE_MARKER;
   const loginId = process.env.FIXTURE_LOGIN_ID;
   const password = process.env.FIXTURE_PASSWORD;
+  const roleCode = process.env.FIXTURE_ROLE_CODE || "DISPATCHER";
 
   const prisma = new PrismaClient();
   try {
     const passwordHash = await hash(password);
     const user = await prisma.user.create({
       data: {
-        displayName: `${marker}-dispatcher (playwright e2e, safe to delete)`,
+        displayName: `${marker}-${roleCode.toLowerCase()} (playwright e2e, safe to delete)`,
         loginIdNormalized: loginId,
         passwordHash,
         credentialsEnabled: true,
@@ -30,7 +31,7 @@ async function main() {
       },
     });
 
-    const role = await prisma.role.findUniqueOrThrow({ where: { code: "DISPATCHER" } });
+    const role = await prisma.role.findUniqueOrThrow({ where: { code: roleCode } });
     await prisma.userRoleAssignment.create({ data: { userId: user.id, roleId: role.id } });
 
     const customer = await prisma.customer.create({

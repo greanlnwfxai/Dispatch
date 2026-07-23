@@ -707,3 +707,210 @@ export function formatDeliveryTaskNumber(sequenceValue: bigint | number): string
   }
   return `DSP-${numeric.toString().padStart(8, "0")}`;
 }
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════
+ * MVP-03 — Preparation and pre-loading evidence
+ * ═══════════════════════════════════════════════════════════════════════
+ *
+ * Pure rule helpers for WAITING_PREPARATION → PREPARING →
+ * READY_FOR_DISPATCH, loading evidence, pre-ready issues, and post-transit
+ * preparation correction governance. BDR-PREP-002/003 remain open: this
+ * module enforces the approved completeness boundary (every planned item
+ * has a preparation snapshot, non-negative prepared quantities, at least
+ * one pre-loading photo, and no OPEN issue) without inventing an equality
+ * rule between planned and prepared quantities.
+ */
+
+export interface PreparationValidationError {
+  code: string;
+  message: string;
+}
+
+export interface PreparationItemSnapshot {
+  id: string;
+  taskItemId: string;
+  lineNumber: number;
+  descriptionSnapshot: string;
+  plannedQuantitySnapshot: string;
+  preparedQuantity: string;
+  unitSnapshot: string;
+  notes: string | null;
+}
+
+export interface PreparationIssueSnapshot {
+  id: string;
+  status: string;
+}
+
+export interface PreparationEvidenceSnapshot {
+  id: string;
+  category: string;
+}
+
+export interface PreparationReadySnapshot {
+  taskStatus: string;
+  plannedTaskItemIds: string[];
+  preparationItems: PreparationItemSnapshot[];
+  issues: PreparationIssueSnapshot[];
+  evidence: PreparationEvidenceSnapshot[];
+}
+
+export interface PreparationUpdateItemInput {
+  preparationItemId: string;
+  preparedQuantity: string;
+  notes: string | null;
+}
+
+export interface PreparationIssueInput {
+  description: string;
+  preparationItemId?: string | null;
+}
+
+export interface PreparationIssueResolveInput {
+  resolutionNote: string;
+}
+
+export interface PreparationCorrectionInput {
+  materiality: string;
+  reason: string;
+  changeSummary: string;
+  correctedOrExceptionSnapshot: unknown;
+}
+
+export interface PreparationCorrectionReviewInput {
+  reviewStatus: string;
+  reviewNote: string;
+}
+
+const MAX_PREPARATION_TEXT_LENGTH = 1000;
+const MAX_PREPARATION_ITEM_NOTE_LENGTH = 500;
+const POST_TRANSIT_CORRECTION_STATUSES = [
+  "IN_TRANSIT",
+  "AT_DESTINATION",
+  "WAITING_NEXT_ATTEMPT",
+  "COMPLETED",
+  "CANCELLED",
+] as const;
+
+export function validatePreparationStart(taskStatus: string): PreparationValidationError[] {
+  return taskStatus === "WAITING_PREPARATION"
+    ? []
+    : [{ code: "TASK_NOT_WAITING_PREPARATION", message: "Preparation can start only from WAITING_PREPARATION." }];
+}
+
+export function validatePreparationUpdate(
+  taskStatus: string,
+  updates: PreparationUpdateItemInput[],
+): PreparationValidationError[] {
+  const errors: PreparationValidationError[] = [];
+  if (taskStatus !== "PREPARING") {
+    errors.push({ code: "TASK_NOT_PREPARING", message: "Preparation can be updated only while PREPARING." });
+  }
+  if (updates.length === 0) {
+    errors.push({ code: "AT_LEAST_ONE_PREPARATION_ITEM_UPDATE_REQUIRED", message: "At least one item update is required." });
+  }
+  const ids = new Set<string>();
+  for (const update of updates) {
+    if (ids.has(update.preparationItemId)) {
+      errors.push({ code: "DUPLICATE_PREPARATION_ITEM_UPDATE", message: "Each preparation item may appear once per update." });
+    }
+    ids.add(update.preparationItemId);
+    errors.push(...validatePreparedQuantity(update.preparedQuantity));
+    if (update.notes !== null && update.notes.trim().length > MAX_PREPARATION_ITEM_NOTE_LENGTH) {
+      errors.push({ code: "PREPARATION_ITEM_NOTE_TOO_LONG", message: "Preparation item notes must be 500 characters or fewer." });
+    }
+  }
+  return errors;
+}
+
+export function validatePreparedQuantity(value: string): PreparationValidationError[] {
+  const decimalPattern = /^\d{1,15}(\.\d{1,3})?$/;
+  if (!decimalPattern.test(value)) {
+    return [{ code: "PREPARED_QUANTITY_INVALID", message: "Prepared quantity must be a non-negative Decimal(18,3)." }];
+  }
+  return [];
+}
+
+export function validatePreparationIssueInput(input: PreparationIssueInput): PreparationValidationError[] {
+  const description = input.description.trim();
+  if (description.length === 0 || description.length > MAX_PREPARATION_TEXT_LENGTH) {
+    return [{ code: "PREPARATION_ISSUE_DESCRIPTION_INVALID", message: "Issue description must be 1-1000 characters." }];
+  }
+  return [];
+}
+
+export function validatePreparationIssueResolveInput(input: PreparationIssueResolveInput): PreparationValidationError[] {
+  const note = input.resolutionNote.trim();
+  if (note.length === 0 || note.length > MAX_PREPARATION_TEXT_LENGTH) {
+    return [{ code: "PREPARATION_ISSUE_RESOLUTION_INVALID", message: "Resolution note must be 1-1000 characters." }];
+  }
+  return [];
+}
+
+export function validatePreparationReady(snapshot: PreparationReadySnapshot): PreparationValidationError[] {
+  const errors: PreparationValidationError[] = [];
+  if (snapshot.taskStatus !== "PREPARING") {
+    errors.push({ code: "TASK_NOT_PREPARING", message: "Ready confirmation can run only from PREPARING." });
+  }
+  const planned = new Set(snapshot.plannedTaskItemIds);
+  const prepared = new Set(snapshot.preparationItems.map((item) => item.taskItemId));
+  if (snapshot.preparationItems.length !== snapshot.plannedTaskItemIds.length) {
+    errors.push({ code: "PREPARATION_ITEM_SNAPSHOT_INCOMPLETE", message: "Every planned item must have one preparation item." });
+  }
+  for (const plannedId of planned) {
+    if (!prepared.has(plannedId)) {
+      errors.push({ code: "PREPARATION_ITEM_SNAPSHOT_MISSING", message: "A planned item has no preparation snapshot." });
+    }
+  }
+  for (const item of snapshot.preparationItems) {
+    if (!planned.has(item.taskItemId)) {
+      errors.push({ code: "UNEXPECTED_PREPARATION_ITEM", message: "Preparation item does not belong to the Task's planned goods." });
+    }
+    errors.push(...validatePreparedQuantity(item.preparedQuantity));
+    if (!(Number(item.plannedQuantitySnapshot) > 0)) {
+      errors.push({ code: "PREPARATION_PLANNED_SNAPSHOT_INVALID", message: "Planned quantity snapshot must be positive." });
+    }
+  }
+  if (snapshot.issues.some((issue) => issue.status === "OPEN")) {
+    errors.push({ code: "OPEN_PREPARATION_ISSUE_EXISTS", message: "All blocking preparation issues must be resolved." });
+  }
+  if (!snapshot.evidence.some((evidence) => evidence.category === "PRE_LOADING_PHOTO")) {
+    errors.push({ code: "PRE_LOADING_PHOTO_REQUIRED", message: "At least one pre-loading photo is required." });
+  }
+  return errors;
+}
+
+export function validatePostTransitDiscrepancyStatus(taskStatus: string): PreparationValidationError[] {
+  return (POST_TRANSIT_CORRECTION_STATUSES as readonly string[]).includes(taskStatus)
+    ? []
+    : [{ code: "TASK_NOT_POST_TRANSIT", message: "Stock discrepancy reports are accepted only after delivery starts." }];
+}
+
+export function validatePreparationCorrectionInput(input: PreparationCorrectionInput): PreparationValidationError[] {
+  const errors: PreparationValidationError[] = [];
+  if (input.materiality !== "NORMAL" && input.materiality !== "MATERIAL") {
+    errors.push({ code: "PREPARATION_CORRECTION_MATERIALITY_INVALID", message: "Materiality must be NORMAL or MATERIAL." });
+  }
+  if (input.reason.trim().length === 0 || input.reason.trim().length > MAX_PREPARATION_TEXT_LENGTH) {
+    errors.push({ code: "PREPARATION_CORRECTION_REASON_INVALID", message: "Reason must be 1-1000 characters." });
+  }
+  if (input.changeSummary.trim().length === 0 || input.changeSummary.trim().length > MAX_PREPARATION_TEXT_LENGTH) {
+    errors.push({ code: "PREPARATION_CORRECTION_SUMMARY_INVALID", message: "Change summary must be 1-1000 characters." });
+  }
+  if (input.correctedOrExceptionSnapshot === null || typeof input.correctedOrExceptionSnapshot !== "object") {
+    errors.push({ code: "PREPARATION_CORRECTION_SNAPSHOT_INVALID", message: "Correction/exception snapshot must be an object." });
+  }
+  return errors;
+}
+
+export function validatePreparationCorrectionReviewInput(input: PreparationCorrectionReviewInput): PreparationValidationError[] {
+  const errors: PreparationValidationError[] = [];
+  if (input.reviewStatus !== "REVIEWED") {
+    errors.push({ code: "PREPARATION_CORRECTION_REVIEW_STATUS_INVALID", message: "MVP-03 review action only supports REVIEWED." });
+  }
+  if (input.reviewNote.trim().length === 0 || input.reviewNote.trim().length > MAX_PREPARATION_TEXT_LENGTH) {
+    errors.push({ code: "PREPARATION_CORRECTION_REVIEW_NOTE_INVALID", message: "Review note must be 1-1000 characters." });
+  }
+  return errors;
+}

@@ -350,5 +350,81 @@ HIGH/CRITICAL finding, accepted or otherwise.
 
 ---
 
+## MVP-03 — 2026-07-23
+
+### No new dependencies added — no HIGH/CRITICAL findings
+
+MVP-03 adds Prisma schema, NestJS code, Admin Web code, and tests using
+dependencies already present in the workspace. `./scripts/security-review.sh`
+reported no HIGH/CRITICAL dependency findings. No `.security-accepted-risks`
+entry was required.
+
+### Pre-loading evidence storage — private development adapter, no public bucket or host port
+
+TDR-STORAGE-001 is resolved for MVP-03 as a technical implementation
+decision: a filesystem-backed development adapter mounted at
+`/var/lib/dispatch/evidence` on a persistent Docker named volume. The API is
+the only access path. No evidence host port, public bucket, public object URL,
+or signed URL is exposed. Production remains targeted at private
+S3-compatible object storage behind the same storage interface.
+
+Object keys are opaque (`preparation/{preparationId}/{uuid}.{ext}`), never
+derived from original filenames, and validated by both application regex and
+database CHECK constraint. The storage adapter resolves paths under its root
+and rejects traversal before any read/delete/write.
+
+### Upload validation — MIME spoofing, oversized uploads, and multipart abuse reviewed
+
+`POST /tasks/:id/preparation/evidence` accepts exactly one multipart file
+field (`photo`) with bounded file size, field count, and part count. JPEG,
+PNG, and WebP are accepted only when the declared MIME type and magic bytes
+match. SHA-256 is calculated server-side over the original bytes; raw image
+bytes and object keys are not logged or returned in normal API responses.
+
+### Evidence retrieval — authenticated and authorized every request
+
+`GET /tasks/:id/preparation/evidence/:evidenceId` reuses the authenticated
+RBAC guard and verifies the evidence belongs to the requested Task before
+opening storage. Responses use sanitized attachment filenames and
+`Cache-Control: private, no-store`. Object storage paths/keys remain server
+internal.
+
+### Object/database consistency — exact compensating cleanup only
+
+The evidence service writes a newly generated object first, then creates
+metadata and the TaskEvent inside a locked transaction. If metadata creation
+or state validation fails after the object write, the service deletes only
+that exact newly generated object key. Tests verify valid upload,
+MIME/magic mismatch rejection, checksum metadata, private retrieval, and zero
+residue after cleanup.
+
+### RBAC and state guards — no Super Admin business bypass
+
+Preparation write actions are restricted to `STOCK`, `ADMIN`, and
+`SUPER_ADMIN`; read-only roles cannot mutate. Correction creation is
+`ADMIN` only; review is `SUPER_ADMIN` only. `INTERNAL_DELIVERY_EMPLOYEE` has
+no MVP-03 access because Assignment/record scope is not implemented. All
+state transitions still validate current Task state after PostgreSQL row
+locking, so authorization never bypasses business invariants.
+
+### Browser storage — evidence kept in memory only
+
+Admin Web evidence upload uses the browser `File` object and Blob preview
+URLs only. Blob URLs are revoked; no customer/preparation/evidence data is
+written to localStorage, sessionStorage, or IndexedDB. The existing static
+scanner and Playwright flow passed.
+
+### Known scanner warning — literal `DATABASE_URL` references reviewed
+
+`./scripts/security-review.sh` reports a WARN for literal `DATABASE_URL`
+strings in comments/tests and existing Prisma-service documentation. Manual
+review confirmed these are variable names or negative assertions only, not
+connection-string values. No secret value was committed.
+
+**No entries in `.security-accepted-risks` were required for MVP-03** — no
+HIGH/CRITICAL finding, accepted or otherwise.
+
+---
+
 <!-- Future accepted-risk entries go below this line, in the format described
      in docs/SECURITY_PATCH_POLICY.md -->

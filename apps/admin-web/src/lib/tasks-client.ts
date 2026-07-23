@@ -1,12 +1,25 @@
 import {
   buildDeliveryTaskPath,
   buildDeliveryTaskSubmitPath,
+  buildPreparationConfirmReadyPath,
+  buildPreparationCorrectionReviewPath,
+  buildPreparationCorrectionsPath,
+  buildPreparationEvidencePath,
+  buildPreparationIssueResolvePath,
+  buildPreparationIssuesPath,
+  buildPreparationPath,
+  buildPreparationStartPath,
+  PREPARATION_CORRECTIONS_PATH,
   CUSTOMER_MASTER_SEARCH_PATH,
   DELIVERY_TASKS_PATH,
+  type CreatePreparationCorrectionRequestBody,
   type CreateDeliveryTaskRequestBody,
   type CustomerMasterSearchResponseBody,
   type DeliveryTaskDetailDto,
   type ListDeliveryTasksResponseBody,
+  type ListPreparationCorrectionsResponseBody,
+  type PreparationDetailDto,
+  type UpdatePreparationRequestBody,
   type UpdateDeliveryTaskDraftRequestBody,
 } from "@dispatch/contracts";
 
@@ -88,6 +101,100 @@ export async function submitDeliveryTask(authFetch: AuthFetch, taskId: string): 
 export async function getDeliveryTask(authFetch: AuthFetch, taskId: string): Promise<DeliveryTaskDetailDto> {
   const response = await authFetch(buildDeliveryTaskPath(taskId));
   return parseJsonOrThrow(response, "ไม่พบงานที่ต้องการ");
+}
+
+export async function getPreparation(authFetch: AuthFetch, taskId: string): Promise<PreparationDetailDto | null> {
+  const response = await authFetch(buildPreparationPath(taskId));
+  if (response.status === 404) return null;
+  return parseJsonOrThrow(response, "โหลดข้อมูลการเตรียมสินค้าไม่สำเร็จ");
+}
+
+export async function startPreparation(authFetch: AuthFetch, taskId: string): Promise<PreparationDetailDto> {
+  const response = await authFetch(buildPreparationStartPath(taskId), { method: "POST" });
+  return parseJsonOrThrow(response, "เริ่มเตรียมสินค้าไม่สำเร็จ");
+}
+
+export async function updatePreparation(
+  authFetch: AuthFetch,
+  taskId: string,
+  body: UpdatePreparationRequestBody,
+): Promise<PreparationDetailDto> {
+  const response = await authFetch(buildPreparationPath(taskId), {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return parseJsonOrThrow(response, "บันทึกการเตรียมสินค้าไม่สำเร็จ");
+}
+
+export async function createPreparationIssue(
+  authFetch: AuthFetch,
+  taskId: string,
+  body: { preparationItemId?: string | null; description: string },
+): Promise<PreparationDetailDto> {
+  const response = await authFetch(buildPreparationIssuesPath(taskId), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return parseJsonOrThrow(response, "บันทึกปัญหาการเตรียมสินค้าไม่สำเร็จ");
+}
+
+export async function resolvePreparationIssue(
+  authFetch: AuthFetch,
+  taskId: string,
+  issueId: string,
+  body: { resolutionNote: string },
+): Promise<PreparationDetailDto> {
+  const response = await authFetch(buildPreparationIssueResolvePath(taskId, issueId), {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return parseJsonOrThrow(response, "แก้ไขสถานะปัญหาไม่สำเร็จ");
+}
+
+export async function uploadPreparationEvidence(authFetch: AuthFetch, taskId: string, file: File): Promise<PreparationDetailDto> {
+  const formData = new FormData();
+  formData.append("photo", file);
+  const response = await authFetch(buildPreparationEvidencePath(taskId), { method: "POST", body: formData });
+  return parseJsonOrThrow(response, "อัปโหลดรูปก่อนโหลดไม่สำเร็จ");
+}
+
+export async function confirmPreparationReady(authFetch: AuthFetch, taskId: string): Promise<PreparationDetailDto> {
+  const response = await authFetch(buildPreparationConfirmReadyPath(taskId), { method: "POST" });
+  return parseJsonOrThrow(response, "ยืนยันพร้อมจัดส่งไม่สำเร็จ");
+}
+
+export async function createPreparationCorrection(
+  authFetch: AuthFetch,
+  taskId: string,
+  body: CreatePreparationCorrectionRequestBody,
+): Promise<PreparationDetailDto> {
+  const response = await authFetch(buildPreparationCorrectionsPath(taskId), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return parseJsonOrThrow(response, "สร้าง Correction/Exception Record ไม่สำเร็จ");
+}
+
+export async function listPreparationCorrections(authFetch: AuthFetch): Promise<ListPreparationCorrectionsResponseBody> {
+  const response = await authFetch(`${PREPARATION_CORRECTIONS_PATH}?page=1&pageSize=50`);
+  return parseJsonOrThrow(response, "โหลดคิว Correction/Exception ไม่สำเร็จ");
+}
+
+export async function reviewPreparationCorrection(
+  authFetch: AuthFetch,
+  correctionId: string,
+  reviewNote: string,
+): Promise<unknown> {
+  const response = await authFetch(buildPreparationCorrectionReviewPath(correctionId), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reviewNote }),
+  });
+  return parseJsonOrThrow(response, "บันทึกผล Review ไม่สำเร็จ");
 }
 
 export async function listDeliveryTasks(

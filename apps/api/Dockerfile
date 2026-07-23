@@ -41,7 +41,9 @@ ENV NODE_ENV=production
 ENV PORT=3000
 
 RUN addgroup --system --gid 1001 nodejs \
- && adduser  --system --uid 1001 dispatch
+ && adduser  --system --uid 1001 dispatch \
+ && mkdir -p /var/lib/dispatch/evidence \
+ && chown -R dispatch:nodejs /var/lib/dispatch
 
 COPY --from=builder --chown=dispatch:nodejs /repo/node_modules ./node_modules
 COPY --from=builder --chown=dispatch:nodejs /repo/packages ./packages

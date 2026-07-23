@@ -59,6 +59,14 @@ model User {
   createdDeliveryTasks   DeliveryTask[]         @relation("DeliveryTaskCreatedBy")
   updatedDeliveryTasks   DeliveryTask[]         @relation("DeliveryTaskUpdatedBy")
   taskEvents             TaskEvent[]
+  preparationStarts      PreparationRecord[]           @relation("PreparationStartedBy")
+  preparationReadyConfirms PreparationRecord[]         @relation("PreparationReadyConfirmedBy")
+  preparationIssuesReported PreparationIssue[]         @relation("PreparationIssueReportedBy")
+  preparationIssuesResolved PreparationIssue[]         @relation("PreparationIssueResolvedBy")
+  preparationEvidenceUploads PreparationEvidence[]
+  preparationDiscrepancyReports PreparationDiscrepancyReport[]
+  preparationCorrectionsCreated PreparationCorrectionRecord[] @relation("PreparationCorrectionCreatedBy")
+  preparationCorrectionsReviewed PreparationCorrectionRecord[] @relation("PreparationCorrectionReviewedBy")
 
   @@unique([loginIdNormalized])
   @@map("users")
@@ -321,6 +329,9 @@ model DeliveryTask {
   items      DeliveryTaskItem[]
   references TaskReference[]
   events     TaskEvent[]
+  preparationRecord PreparationRecord?
+  preparationDiscrepancyReports PreparationDiscrepancyReport[]
+  preparationCorrections PreparationCorrectionRecord[]
 
   @@index([status])
   @@index([plannedDeliveryDate])
@@ -343,6 +354,7 @@ model DeliveryTaskItem {
   updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   task DeliveryTask @relation(fields: [taskId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  preparationItems PreparationItem[]
 
   @@unique([taskId, lineNumber])
   @@index([taskId])
@@ -385,4 +397,180 @@ model TaskEvent {
 
   @@index([taskId])
   @@map("task_events")
+}
+
+enum PreparationIssueStatus {
+  OPEN
+  RESOLVED
+
+  @@map("preparation_issue_status")
+}
+
+enum PreparationEvidenceCategory {
+  PRE_LOADING_PHOTO
+
+  @@map("preparation_evidence_category")
+}
+
+enum PreparationCorrectionMateriality {
+  NORMAL
+  MATERIAL
+
+  @@map("preparation_correction_materiality")
+}
+
+enum PreparationCorrectionReviewStatus {
+  PENDING_REVIEW
+  REVIEWED
+
+  @@map("preparation_correction_review_status")
+}
+
+/// MVP-03 preparation header. One frozen preparation record per Task in
+/// this milestone; future DeliveryAttempt records may reference this record
+/// instead of copying evidence.
+model PreparationRecord {
+  id                     String    @id @default(uuid()) @db.Uuid
+  taskId                 String    @unique @map("task_id") @db.Uuid
+  startedByUserId        String    @map("started_by_user_id") @db.Uuid
+  startedAt              DateTime  @default(now()) @map("started_at") @db.Timestamptz(6)
+  readyConfirmedByUserId String?   @map("ready_confirmed_by_user_id") @db.Uuid
+  readyConfirmedAt       DateTime? @map("ready_confirmed_at") @db.Timestamptz(6)
+  notes                  String?   @db.VarChar(1000)
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  task DeliveryTask @relation(fields: [taskId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  startedBy User @relation("PreparationStartedBy", fields: [startedByUserId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  readyConfirmedBy User? @relation("PreparationReadyConfirmedBy", fields: [readyConfirmedByUserId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  items PreparationItem[]
+  issues PreparationIssue[]
+  evidence PreparationEvidence[]
+  discrepancyReports PreparationDiscrepancyReport[]
+  corrections PreparationCorrectionRecord[]
+
+  @@index([startedByUserId])
+  @@index([readyConfirmedByUserId])
+  @@map("preparation_records")
+}
+
+model PreparationItem {
+  id                      String   @id @default(uuid()) @db.Uuid
+  preparationId           String   @map("preparation_id") @db.Uuid
+  taskItemId              String   @map("task_item_id") @db.Uuid
+  lineNumber              Int      @map("line_number")
+  descriptionSnapshot     String   @map("description_snapshot") @db.VarChar(500)
+  plannedQuantitySnapshot Decimal  @map("planned_quantity_snapshot") @db.Decimal(18, 3)
+  preparedQuantity        Decimal  @default(0) @map("prepared_quantity") @db.Decimal(18, 3)
+  unitSnapshot            String   @map("unit_snapshot") @db.VarChar(32)
+  notes                   String?  @db.VarChar(500)
+  createdAt               DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  preparation PreparationRecord @relation(fields: [preparationId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  taskItem DeliveryTaskItem @relation(fields: [taskItemId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  issues PreparationIssue[]
+
+  @@unique([preparationId, taskItemId])
+  @@unique([preparationId, lineNumber])
+  @@index([taskItemId])
+  @@map("preparation_items")
+}
+
+model PreparationIssue {
+  id                String                 @id @default(uuid()) @db.Uuid
+  preparationId     String                 @map("preparation_id") @db.Uuid
+  preparationItemId String?                @map("preparation_item_id") @db.Uuid
+  description       String                 @db.VarChar(1000)
+  status            PreparationIssueStatus @default(OPEN)
+  reportedByUserId  String                 @map("reported_by_user_id") @db.Uuid
+  reportedAt        DateTime               @default(now()) @map("reported_at") @db.Timestamptz(6)
+  resolutionNote    String?                @map("resolution_note") @db.VarChar(1000)
+  resolvedByUserId  String?                @map("resolved_by_user_id") @db.Uuid
+  resolvedAt        DateTime?              @map("resolved_at") @db.Timestamptz(6)
+
+  preparation PreparationRecord @relation(fields: [preparationId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  preparationItem PreparationItem? @relation(fields: [preparationItemId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  reportedBy User @relation("PreparationIssueReportedBy", fields: [reportedByUserId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  resolvedBy User? @relation("PreparationIssueResolvedBy", fields: [resolvedByUserId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([preparationId, status])
+  @@index([preparationItemId])
+  @@index([reportedByUserId])
+  @@index([resolvedByUserId])
+  @@map("preparation_issues")
+}
+
+model PreparationEvidence {
+  id               String                      @id @default(uuid()) @db.Uuid
+  preparationId    String                      @map("preparation_id") @db.Uuid
+  category         PreparationEvidenceCategory
+  objectKey        String                      @unique @map("object_key") @db.VarChar(160)
+  originalFilename String                      @map("original_filename") @db.VarChar(255)
+  mediaType        String                      @map("media_type") @db.VarChar(64)
+  sizeBytes        Int                         @map("size_bytes")
+  sha256           String                      @db.VarChar(64)
+  uploadedByUserId String                      @map("uploaded_by_user_id") @db.Uuid
+  createdAt        DateTime                    @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  preparation PreparationRecord @relation(fields: [preparationId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  uploadedBy User @relation(fields: [uploadedByUserId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([preparationId, category])
+  @@index([uploadedByUserId])
+  @@map("preparation_evidence")
+}
+
+model PreparationDiscrepancyReport {
+  id                 String   @id @default(uuid()) @db.Uuid
+  taskId             String   @map("task_id") @db.Uuid
+  preparationId      String   @map("preparation_id") @db.Uuid
+  reportedByUserId   String   @map("reported_by_user_id") @db.Uuid
+  description        String   @db.VarChar(1000)
+  reportedAt         DateTime @default(now()) @map("reported_at") @db.Timestamptz(6)
+  linkedCorrectionId String?  @unique @map("linked_correction_id") @db.Uuid
+
+  task DeliveryTask @relation(fields: [taskId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  preparation PreparationRecord @relation(fields: [preparationId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  reportedBy User @relation(fields: [reportedByUserId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  linkedCorrection PreparationCorrectionRecord? @relation("LinkedPreparationCorrection", fields: [linkedCorrectionId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  correctionRecords PreparationCorrectionRecord[] @relation("PreparationCorrectionDiscrepancyReport")
+
+  @@index([taskId])
+  @@index([preparationId])
+  @@index([reportedByUserId])
+  @@map("preparation_discrepancy_reports")
+}
+
+model PreparationCorrectionRecord {
+  id                           String                              @id @default(uuid()) @db.Uuid
+  taskId                       String                              @map("task_id") @db.Uuid
+  preparationId                String                              @map("preparation_id") @db.Uuid
+  discrepancyReportId          String?                             @map("discrepancy_report_id") @db.Uuid
+  createdByUserId              String                              @map("created_by_user_id") @db.Uuid
+  materiality                  PreparationCorrectionMateriality
+  reason                       String                              @db.VarChar(1000)
+  changeSummary                String                              @map("change_summary") @db.VarChar(1000)
+  originalPreparationSnapshot  Json                                @map("original_preparation_snapshot")
+  correctedOrExceptionSnapshot Json                                @map("corrected_or_exception_snapshot")
+  reviewStatus                 PreparationCorrectionReviewStatus   @default(PENDING_REVIEW) @map("review_status")
+  createdAt                    DateTime                            @default(now()) @map("created_at") @db.Timestamptz(6)
+  reviewedByUserId             String?                             @map("reviewed_by_user_id") @db.Uuid
+  reviewedAt                   DateTime?                           @map("reviewed_at") @db.Timestamptz(6)
+  reviewNote                   String?                             @map("review_note") @db.VarChar(1000)
+
+  task DeliveryTask @relation(fields: [taskId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  preparation PreparationRecord @relation(fields: [preparationId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  discrepancyReport PreparationDiscrepancyReport? @relation("PreparationCorrectionDiscrepancyReport", fields: [discrepancyReportId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  linkedFromDiscrepancy PreparationDiscrepancyReport? @relation("LinkedPreparationCorrection")
+  createdBy User @relation("PreparationCorrectionCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  reviewedBy User? @relation("PreparationCorrectionReviewedBy", fields: [reviewedByUserId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([taskId])
+  @@index([preparationId])
+  @@index([discrepancyReportId])
+  @@index([reviewStatus, materiality, createdAt])
+  @@index([createdByUserId])
+  @@index([reviewedByUserId])
+  @@map("preparation_correction_records")
 }

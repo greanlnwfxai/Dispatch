@@ -39,6 +39,9 @@ services:
       AUTH_ALLOWED_ORIGINS: ${AUTH_ALLOWED_ORIGINS:-http://localhost:6001,http://localhost:6003}
       AUTH_LOGIN_RATE_LIMIT: ${AUTH_LOGIN_RATE_LIMIT:-5:60}
       AUTH_REFRESH_RATE_LIMIT: ${AUTH_REFRESH_RATE_LIMIT:-30:60}
+      EVIDENCE_STORAGE_ROOT: /var/lib/dispatch/evidence
+    volumes:
+      - dispatch_evidence_data:/var/lib/dispatch/evidence
     depends_on:
       db:
         condition: service_healthy
@@ -86,4 +89,6 @@ services:
 
 volumes:
   postgres_data:
+    driver: local
+  dispatch_evidence_data:
     driver: local

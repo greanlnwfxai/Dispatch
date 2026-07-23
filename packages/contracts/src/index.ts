@@ -92,6 +92,10 @@ import type {
   DeliveryTaskStatus,
   DestinationSource,
   FreeTextFallbackReason,
+  PreparationCorrectionMateriality,
+  PreparationCorrectionReviewStatus,
+  PreparationEvidenceCategory,
+  PreparationIssueStatus,
 } from "@dispatch/shared-types";
 
 export const CUSTOMER_MASTER_SEARCH_PATH = "/customer-master/search" as const;
@@ -103,6 +107,48 @@ export function buildDeliveryTaskPath(taskId: string): string {
 
 export function buildDeliveryTaskSubmitPath(taskId: string): string {
   return `${DELIVERY_TASKS_PATH}/${taskId}/submit`;
+}
+
+export function buildPreparationPath(taskId: string): string {
+  return `${DELIVERY_TASKS_PATH}/${taskId}/preparation`;
+}
+
+export function buildPreparationStartPath(taskId: string): string {
+  return `${buildPreparationPath(taskId)}/start`;
+}
+
+export function buildPreparationConfirmReadyPath(taskId: string): string {
+  return `${buildPreparationPath(taskId)}/confirm-ready`;
+}
+
+export function buildPreparationIssuesPath(taskId: string): string {
+  return `${buildPreparationPath(taskId)}/issues`;
+}
+
+export function buildPreparationIssueResolvePath(taskId: string, issueId: string): string {
+  return `${buildPreparationIssuesPath(taskId)}/${issueId}/resolve`;
+}
+
+export function buildPreparationEvidencePath(taskId: string): string {
+  return `${buildPreparationPath(taskId)}/evidence`;
+}
+
+export function buildPreparationEvidenceDownloadPath(taskId: string, evidenceId: string): string {
+  return `${buildPreparationEvidencePath(taskId)}/${evidenceId}`;
+}
+
+export function buildPreparationDiscrepancyReportsPath(taskId: string): string {
+  return `${buildPreparationPath(taskId)}/discrepancy-reports`;
+}
+
+export function buildPreparationCorrectionsPath(taskId: string): string {
+  return `${buildPreparationPath(taskId)}/corrections`;
+}
+
+export const PREPARATION_CORRECTIONS_PATH = "/preparation-corrections" as const;
+
+export function buildPreparationCorrectionReviewPath(correctionId: string): string {
+  return `${PREPARATION_CORRECTIONS_PATH}/${correctionId}/review`;
 }
 
 export interface CustomerMasterSearchRequestBody {
@@ -239,4 +285,134 @@ export interface ListDeliveryTasksResponseBody {
   total: number;
 }
 
-export type { DeliveryTaskStatus, DestinationSource, FreeTextFallbackReason } from "@dispatch/shared-types";
+export interface PreparationItemDto {
+  id: string;
+  taskItemId: string;
+  lineNumber: number;
+  descriptionSnapshot: string;
+  plannedQuantitySnapshot: string;
+  preparedQuantity: string;
+  unitSnapshot: string;
+  notes: string | null;
+}
+
+export interface PreparationIssueDto {
+  id: string;
+  preparationItemId: string | null;
+  description: string;
+  status: PreparationIssueStatus;
+  reportedByUserId: string;
+  reportedAt: string;
+  resolutionNote: string | null;
+  resolvedByUserId: string | null;
+  resolvedAt: string | null;
+}
+
+export interface PreparationEvidenceDto {
+  id: string;
+  category: PreparationEvidenceCategory;
+  originalFilename: string;
+  mediaType: string;
+  sizeBytes: number;
+  sha256: string;
+  uploadedByUserId: string;
+  createdAt: string;
+  downloadPath: string;
+}
+
+export interface PreparationDiscrepancyReportDto {
+  id: string;
+  taskId: string;
+  preparationId: string;
+  reportedByUserId: string;
+  description: string;
+  reportedAt: string;
+  linkedCorrectionId: string | null;
+}
+
+export interface PreparationCorrectionRecordDto {
+  id: string;
+  taskId: string;
+  preparationId: string;
+  discrepancyReportId: string | null;
+  createdByUserId: string;
+  materiality: PreparationCorrectionMateriality;
+  reason: string;
+  changeSummary: string;
+  originalPreparationSnapshot: unknown;
+  correctedOrExceptionSnapshot: unknown;
+  reviewStatus: PreparationCorrectionReviewStatus;
+  createdAt: string;
+  reviewedByUserId: string | null;
+  reviewedAt: string | null;
+  reviewNote: string | null;
+}
+
+export interface PreparationDetailDto {
+  id: string;
+  taskId: string;
+  taskNumber: string;
+  taskStatus: DeliveryTaskStatus;
+  destinationName: string;
+  address: string;
+  startedByUserId: string;
+  startedAt: string;
+  readyConfirmedByUserId: string | null;
+  readyConfirmedAt: string | null;
+  notes: string | null;
+  items: PreparationItemDto[];
+  issues: PreparationIssueDto[];
+  evidence: PreparationEvidenceDto[];
+  discrepancyReports: PreparationDiscrepancyReportDto[];
+  corrections: PreparationCorrectionRecordDto[];
+}
+
+export interface UpdatePreparationRequestBody {
+  items: Array<{
+    preparationItemId: string;
+    preparedQuantity: string;
+    notes?: string | null;
+  }>;
+}
+
+export interface CreatePreparationIssueRequestBody {
+  preparationItemId?: string | null;
+  description: string;
+}
+
+export interface ResolvePreparationIssueRequestBody {
+  resolutionNote: string;
+}
+
+export interface CreatePreparationDiscrepancyReportRequestBody {
+  description: string;
+}
+
+export interface CreatePreparationCorrectionRequestBody {
+  discrepancyReportId?: string | null;
+  materiality: PreparationCorrectionMateriality;
+  reason: string;
+  changeSummary: string;
+  correctedOrExceptionSnapshot: Record<string, unknown>;
+}
+
+export interface ListPreparationCorrectionsResponseBody {
+  items: PreparationCorrectionRecordDto[];
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
+export interface ReviewPreparationCorrectionRequestBody {
+  reviewNote: string;
+}
+
+export type {
+  DeliveryTaskStatus,
+  DestinationSource,
+  FreeTextFallbackReason,
+  PreparationCorrectionMateriality,
+  PreparationCorrectionReviewStatus,
+  PreparationEvidenceCategory,
+  PreparationIssueStatus,
+} from "@dispatch/shared-types";

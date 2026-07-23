@@ -5,11 +5,19 @@ import {
   DISPATCH_ROLE_CODES,
   DISPATCH_SERVICE_NAMES,
   FREE_TEXT_FALLBACK_REASON_CODES,
+  PREPARATION_CORRECTION_MATERIALITY_CODES,
+  PREPARATION_CORRECTION_REVIEW_STATUS_CODES,
+  PREPARATION_EVIDENCE_CATEGORY_CODES,
+  PREPARATION_ISSUE_STATUS_CODES,
   isDeliveryTaskStatus,
   isDestinationSource,
   isDispatchRoleCode,
   isDispatchServiceName,
   isFreeTextFallbackReason,
+  isPreparationCorrectionMateriality,
+  isPreparationCorrectionReviewStatus,
+  isPreparationEvidenceCategory,
+  isPreparationIssueStatus,
 } from "./index";
 
 describe("isDispatchServiceName", () => {
@@ -107,5 +115,23 @@ describe("FREE_TEXT_FALLBACK_REASON_CODES", () => {
       expect(isFreeTextFallbackReason(code)).toBe(true);
     }
     expect(isFreeTextFallbackReason("BECAUSE")).toBe(false);
+  });
+});
+
+describe("MVP-03 preparation enums", () => {
+  it("exposes only the approved preparation evidence category", () => {
+    expect([...PREPARATION_EVIDENCE_CATEGORY_CODES]).toEqual(["PRE_LOADING_PHOTO"]);
+    expect(isPreparationEvidenceCategory("PRE_LOADING_PHOTO")).toBe(true);
+    expect(isPreparationEvidenceCategory("SIGNATURE")).toBe(false);
+  });
+
+  it("exposes issue and correction governance statuses without adding task statuses", () => {
+    expect([...PREPARATION_ISSUE_STATUS_CODES]).toEqual(["OPEN", "RESOLVED"]);
+    expect([...PREPARATION_CORRECTION_MATERIALITY_CODES]).toEqual(["NORMAL", "MATERIAL"]);
+    expect([...PREPARATION_CORRECTION_REVIEW_STATUS_CODES]).toEqual(["PENDING_REVIEW", "REVIEWED"]);
+    expect(isPreparationIssueStatus("OPEN")).toBe(true);
+    expect(isPreparationCorrectionMateriality("MATERIAL")).toBe(true);
+    expect(isPreparationCorrectionReviewStatus("REVIEWED")).toBe(true);
+    expect(isPreparationCorrectionReviewStatus("APPROVED")).toBe(false);
   });
 });

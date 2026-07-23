@@ -5,19 +5,21 @@ covering task creation, stock preparation, assignment, internal delivery
 (GPS check-in, evidence, recipient capture), external courier recording,
 returned goods, reopen, emergency override, and audit/reporting.
 
-**Current milestone: MVP-02 — Customer and Task Creation.** Prior
+**Current milestone: MVP-03 — Preparation and Pre-loading Evidence.** Prior
 milestone AUTH-001 (Authentication and RBAC Foundation) is complete:
 login/refresh/logout with short-lived JWT access tokens, rotating opaque
 refresh tokens, server-side session/revocation storage, and RBAC guards.
-MVP-02 adds the first Dispatch business capability: read-only Customer/
+MVP-02 added the first Dispatch business capability: read-only Customer/
 Destination Master search (search-first, BDR-CUSTOMER-001/002), and
 Delivery Task creation/editing/submission (DRAFT → WAITING_PREPARATION)
-with an immutable Historical Destination Snapshot. **No Preparation,
-Assignment, Delivery, Return, Reopen, Override, or Reporting workflow is
-implemented yet.** Business knowledge and rules live in
+with an immutable Historical Destination Snapshot. MVP-03 adds Stock/Admin
+preparation through `READY_FOR_DISPATCH`, private pre-loading photo
+evidence, preparation issues, and the correction-governance foundation.
+**No Assignment, DeliveryAttempt, Delivery, Return, Reopen, Override, or
+Reporting workflow is implemented yet.** Business knowledge and rules live in
 `Dispatch Knowledge/` (Topics 01–11) and remain the source of truth;
 `CLAUDE.md` governs engineering workflow and safety. See
-`docs/CTO_SUMMARY_MVP_02.md` for the full report.
+`docs/CTO_SUMMARY_MVP_03.md` for the full report.
 
 ## Architecture overview
 
@@ -26,7 +28,8 @@ implemented yet.** Business knowledge and rules live in
 | Admin Web | Next.js (App Router) + React + TailwindCSS | 6001 |
 | Backend API | NestJS + REST | 6002 |
 | Internal Delivery Mobile/PWA | Next.js (App Router) + React + TailwindCSS, PWA-ready | 6003 |
-| Database | PostgreSQL 16 + Prisma (Identity/Role/Session schema) | internal only (no host port) |
+| Database | PostgreSQL 16 + Prisma | internal only (no host port) |
+| Evidence storage | Filesystem-backed development adapter on Docker named volume (`dispatch_evidence_data`) | internal API access only |
 
 Monorepo managed with npm workspaces (Node.js 22). Shared, framework-free
 foundation packages live under `packages/*`. See `CLAUDE.md` for the full
@@ -82,6 +85,13 @@ This starts `db` (PostgreSQL 16, healthcheck via `pg_isready`), `api`
 
 `db` has **no host port mapping** by default — it stays internal to the
 Docker network, matching the current approved scope.
+
+MVP-03 pre-loading evidence is stored by the API in
+`/var/lib/dispatch/evidence`, backed by the persistent
+`dispatch_evidence_data` Docker volume. This is a development adapter behind
+the API storage interface; production remains targeted at private
+S3-compatible object storage. Evidence is never served from a public bucket
+or public filesystem route.
 
 ## Database development (DEV-FOUNDATION-002)
 
@@ -147,8 +157,40 @@ never drops, resets, or truncates anything.
   that a later Customer Master edit never overwrites.
 - RBAC: SUPER_ADMIN/ADMIN/DISPATCHER may search/create/edit/submit;
   SUPER_ADMIN/ADMIN/DISPATCHER/STOCK/MANAGEMENT_AUDITOR may read.
-- No Preparation, Assignment, Delivery, Return, Reopen, Override, or
-  Reporting workflow exists yet — see `docs/CTO_SUMMARY_MVP_02.md`.
+- No Assignment, DeliveryAttempt, Delivery, Return, Reopen, Override, or
+  Reporting workflow exists yet — see `docs/CTO_SUMMARY_MVP_03.md`.
+
+## Preparation and pre-loading evidence (MVP-03)
+
+- `POST /tasks/:id/preparation/start` moves
+  `WAITING_PREPARATION -> PREPARING` and snapshots immutable planned Task
+  items into `PreparationItem` rows.
+- `PATCH /tasks/:id/preparation` updates prepared quantities and notes only
+  while the Task is `PREPARING`; it cannot change planned snapshots.
+- `POST /tasks/:id/preparation/issues` and
+  `PATCH /tasks/:id/preparation/issues/:issueId/resolve` record and resolve
+  preparation issues. Open issues block ready confirmation.
+- `POST /tasks/:id/preparation/evidence` accepts one multipart photo
+  (`image/jpeg`, `image/png`, `image/webp`, magic-byte checked, 5 MB max).
+  `GET /tasks/:id/preparation/evidence/:evidenceId` streams it privately
+  after authentication/RBAC recheck.
+- `POST /tasks/:id/preparation/confirm-ready` moves
+  `PREPARING -> READY_FOR_DISPATCH` only when every planned item has a
+  preparation snapshot, all open issues are resolved, and at least one
+  pre-loading photo exists.
+- Governance endpoints cover post-`IN_TRANSIT` stock discrepancy reports,
+  Admin-created Correction/Exception Records, and Super Admin retrospective
+  review. They do not change Main Task Status and are not Emergency Override.
+
+RBAC:
+
+- Preparation read: SUPER_ADMIN, ADMIN, DISPATCHER, STOCK,
+  MANAGEMENT_AUDITOR.
+- Preparation write/evidence/ready: STOCK, ADMIN, SUPER_ADMIN.
+- Correction create: ADMIN.
+- Correction review: SUPER_ADMIN.
+- INTERNAL_DELIVERY_EMPLOYEE remains denied in MVP-03 because Assignment and
+  record-scope access are not implemented.
 
 ## Verification commands
 
@@ -176,7 +218,7 @@ afterward.
 ```
 Dispatch/
 ├── apps/
-│   ├── admin-web/      # Next.js — Admin Web (login/session shell + MVP-02 Task screens)
+│   ├── admin-web/      # Next.js — Admin Web (login/session shell + MVP-03 Task/preparation screens)
 │   ├── api/             # NestJS — Backend API
 │   │   ├── prisma/       # schema.prisma, migrations/, seed.ts
 │   │   └── src/
@@ -184,10 +226,11 @@ Dispatch/
 │   │       ├── bootstrap/                  # Operator-only initial SUPER_ADMIN CLI
 │   │       ├── customer-master/            # MVP-02 — read-only Customer Master search
 │   │       ├── tasks/                      # MVP-02 — Delivery Task create/edit/submit
+│   │       ├── preparation/                # MVP-03 — preparation, evidence, correction governance
 │   │       └── infrastructure/database/     # PrismaModule/Service, repository adapters
 │   └── mobile-pwa/      # Next.js PWA — Internal Delivery Mobile/PWA (login/session shell only; no MVP-02 UI)
 ├── packages/
-│   ├── contracts/        # Shared health/readiness + auth + MVP-02 Task/Customer-Master API contract
+│   ├── contracts/        # Shared health/readiness + auth + Task/preparation API contracts
 │   ├── domain/            # Framework-independent record types, repository interfaces, business validation
 │   ├── shared-types/      # Service identifiers, health/readiness shape, role/status/enum codes
 │   ├── validation/        # Generic assertion helpers
@@ -211,10 +254,10 @@ them. See `CLAUDE.md` §9.
 
 ## Current limitations
 
-- No Preparation, Assignment, delivery/GPS/evidence, Returns, Reopen,
-  Emergency Override, Correction Action, or Reporting workflow is
-  implemented yet — those begin at MVP-03+ per Dispatch Knowledge Topic 11
-  §21 Implementation Roadmap.
+- No Assignment, DeliveryAttempt, delivery/GPS/handover evidence, Returns,
+  Reopen, Emergency Override, notification delivery, or Reporting workflow is
+  implemented yet — those remain future milestones per Dispatch Knowledge
+  Topic 11 §21 Implementation Roadmap.
 - No Customer Master administration (create/edit/delete/merge/import) —
   MVP-02 is read-only search only; Customer/CustomerDestination rows exist
   only via direct, manual, operator-authorized database action.

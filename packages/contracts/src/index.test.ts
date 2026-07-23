@@ -3,6 +3,11 @@ import {
   buildDeliveryTaskPath,
   buildDeliveryTaskSubmitPath,
   buildHealthUrl,
+  buildPreparationConfirmReadyPath,
+  buildPreparationEvidenceDownloadPath,
+  buildPreparationPath,
+  buildPreparationStartPath,
+  PREPARATION_CORRECTIONS_PATH,
   CUSTOMER_MASTER_SEARCH_PATH,
   DELIVERY_TASKS_PATH,
   isHealthResponse,
@@ -16,6 +21,16 @@ describe("buildHealthUrl", () => {
 
   it("strips a trailing slash before appending /health", () => {
     expect(buildHealthUrl("http://localhost:6002/")).toBe("http://localhost:6002/health");
+  });
+});
+
+describe("MVP-03 preparation paths", () => {
+  it("builds command-oriented preparation paths", () => {
+    expect(buildPreparationPath("task-1")).toBe("/tasks/task-1/preparation");
+    expect(buildPreparationStartPath("task-1")).toBe("/tasks/task-1/preparation/start");
+    expect(buildPreparationConfirmReadyPath("task-1")).toBe("/tasks/task-1/preparation/confirm-ready");
+    expect(buildPreparationEvidenceDownloadPath("task-1", "ev-1")).toBe("/tasks/task-1/preparation/evidence/ev-1");
+    expect(PREPARATION_CORRECTIONS_PATH).toBe("/preparation-corrections");
   });
 });
 

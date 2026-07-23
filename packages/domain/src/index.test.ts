@@ -3,6 +3,12 @@ import {
   createBrandedId,
   findDuplicateTaskReferences,
   formatDeliveryTaskNumber,
+  validatePostTransitDiscrepancyStatus,
+  validatePreparationCorrectionInput,
+  validatePreparationCorrectionReviewInput,
+  validatePreparationReady,
+  validatePreparationStart,
+  validatePreparationUpdate,
   validateDeliveryTaskSubmission,
   validateDestinationSelection,
   validateGoodsLineInput,
@@ -28,6 +34,96 @@ describe("createBrandedId", () => {
 
   it("rejects an empty value", () => {
     expect(() => createBrandedId("ExampleId", "  ")).toThrow();
+  });
+});
+
+describe("MVP-03 preparation validation", () => {
+  it("allows preparation start only from WAITING_PREPARATION", () => {
+    expect(validatePreparationStart("WAITING_PREPARATION")).toEqual([]);
+    expect(validatePreparationStart("DRAFT").map((error) => error.code)).toContain("TASK_NOT_WAITING_PREPARATION");
+  });
+
+  it("validates preparation updates only while PREPARING with non-negative Decimal(18,3) quantities", () => {
+    expect(
+      validatePreparationUpdate("PREPARING", [{ preparationItemId: "item-1", preparedQuantity: "10.125", notes: null }]),
+    ).toEqual([]);
+    expect(
+      validatePreparationUpdate("READY_FOR_DISPATCH", [{ preparationItemId: "item-1", preparedQuantity: "1", notes: null }]).map(
+        (error) => error.code,
+      ),
+    ).toContain("TASK_NOT_PREPARING");
+    expect(
+      validatePreparationUpdate("PREPARING", [{ preparationItemId: "item-1", preparedQuantity: "-1", notes: null }]).map(
+        (error) => error.code,
+      ),
+    ).toContain("PREPARED_QUANTITY_INVALID");
+  });
+
+  it("requires complete preparation snapshots, no open issues, and one pre-loading photo before ready", () => {
+    const base = {
+      taskStatus: "PREPARING",
+      plannedTaskItemIds: ["task-item-1"],
+      preparationItems: [
+        {
+          id: "prep-item-1",
+          taskItemId: "task-item-1",
+          lineNumber: 1,
+          descriptionSnapshot: "Boxes",
+          plannedQuantitySnapshot: "5",
+          preparedQuantity: "4",
+          unitSnapshot: "BOX",
+          notes: null,
+        },
+      ],
+      issues: [],
+      evidence: [{ id: "evidence-1", category: "PRE_LOADING_PHOTO" }],
+    };
+    expect(validatePreparationReady(base)).toEqual([]);
+    expect(validatePreparationReady({ ...base, issues: [{ id: "issue-1", status: "OPEN" }] }).map((error) => error.code)).toContain(
+      "OPEN_PREPARATION_ISSUE_EXISTS",
+    );
+    expect(validatePreparationReady({ ...base, evidence: [] }).map((error) => error.code)).toContain("PRE_LOADING_PHOTO_REQUIRED");
+  });
+
+  it("does not invent a planned-equals-prepared quantity rule while BDR-PREP-002/003 remain open", () => {
+    const errors = validatePreparationReady({
+      taskStatus: "PREPARING",
+      plannedTaskItemIds: ["task-item-1"],
+      preparationItems: [
+        {
+          id: "prep-item-1",
+          taskItemId: "task-item-1",
+          lineNumber: 1,
+          descriptionSnapshot: "Boxes",
+          plannedQuantitySnapshot: "5",
+          preparedQuantity: "4",
+          unitSnapshot: "BOX",
+          notes: "Short by one, documented outside an approved equality policy.",
+        },
+      ],
+      issues: [],
+      evidence: [{ id: "evidence-1", category: "PRE_LOADING_PHOTO" }],
+    });
+    expect(errors).toEqual([]);
+  });
+
+  it("accepts stock discrepancy and correction only after delivery has started", () => {
+    expect(validatePostTransitDiscrepancyStatus("READY_FOR_DISPATCH").map((error) => error.code)).toContain("TASK_NOT_POST_TRANSIT");
+    expect(validatePostTransitDiscrepancyStatus("IN_TRANSIT")).toEqual([]);
+    expect(validatePreparationCorrectionInput({
+      materiality: "MATERIAL",
+      reason: "Stock counted a mismatch after dispatch start.",
+      changeSummary: "Record exception without changing original preparation.",
+      correctedOrExceptionSnapshot: { exception: true },
+    })).toEqual([]);
+  });
+
+  it("requires Super Admin review action to become REVIEWED with a note", () => {
+    expect(validatePreparationCorrectionReviewInput({ reviewStatus: "REVIEWED", reviewNote: "Reviewed retrospectively." })).toEqual([]);
+    expect(validatePreparationCorrectionReviewInput({ reviewStatus: "PENDING_REVIEW", reviewNote: "" }).map((error) => error.code)).toEqual([
+      "PREPARATION_CORRECTION_REVIEW_STATUS_INVALID",
+      "PREPARATION_CORRECTION_REVIEW_NOTE_INVALID",
+    ]);
   });
 });
 
