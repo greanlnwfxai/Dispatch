@@ -88,6 +88,19 @@ if [ "$API_STATUS" != "running" ]; then
 fi
 pass "api running"
 
+# Baseline User/session/refresh-token counts, captured before any
+# migrate/seed/test step below. MVP-02 onward: an operator-created
+# SUPER_ADMIN (with its own real AuthSession/RefreshTokenRecord) may
+# legitimately exist (AUTH-001's bootstrap CLI is a real, manual,
+# operator-only action — see CLAUDE.md §12), so this script no longer
+# asserts these counts are exactly 0. Instead it asserts they are unchanged
+# by migrate/seed and return to this same baseline after the test suite
+# runs (proving the suite cleaned up its own test rows without touching
+# the operator's session).
+BASELINE_USER_COUNT="$(docker compose exec -T db psql -U "${POSTGRES_USER:-dispatch_user}" -d "${POSTGRES_DB:-dispatch}" -tA -c "SELECT count(*) FROM users;" | tr -d '[:space:]')"
+BASELINE_SESSION_COUNT="$(docker compose exec -T db psql -U "${POSTGRES_USER:-dispatch_user}" -d "${POSTGRES_DB:-dispatch}" -tA -c "SELECT count(*) FROM auth_sessions;" | tr -d '[:space:]')"
+BASELINE_TOKEN_COUNT="$(docker compose exec -T db psql -U "${POSTGRES_USER:-dispatch_user}" -d "${POSTGRES_DB:-dispatch}" -tA -c "SELECT count(*) FROM refresh_token_records;" | tr -d '[:space:]')"
+
 # ── 3-5. Prisma migrate status / deploy / seed — through the api container ──
 # `prisma migrate status` exits non-zero when migrations are pending, which
 # is the expected/normal state on a fresh database before `migrate deploy`
@@ -140,13 +153,13 @@ if [ "$(echo "$ROLE_CODES" | sort)" != "$(echo "$EXPECTED_ROLE_CODES" | sort)" ]
 fi
 pass "Seeded role codes match the approved set exactly"
 
-info "Verifying no default User was created..."
+info "Verifying migrate/seed created no default User (count unchanged from baseline)..."
 USER_COUNT="$(docker compose exec -T db psql -U "${POSTGRES_USER:-dispatch_user}" -d "${POSTGRES_DB:-dispatch}" -tA -c "SELECT count(*) FROM users;" | tr -d '[:space:]')"
-if [ "$USER_COUNT" != "0" ]; then
-  fail "Expected 0 Users (no default account), found ${USER_COUNT}"
+if [ "$USER_COUNT" != "$BASELINE_USER_COUNT" ]; then
+  fail "Expected User count to stay at baseline (${BASELINE_USER_COUNT}) after migrate/seed, found ${USER_COUNT}"
   exit 1
 fi
-pass "No default User exists (0 rows in users)"
+pass "User count unchanged by migrate/seed (${USER_COUNT})"
 
 info "Verifying AUTH-001 auth_sessions/refresh_token_records tables exist..."
 AUTH_TABLE_COUNT="$(docker compose exec -T db psql -U "${POSTGRES_USER:-dispatch_user}" -d "${POSTGRES_DB:-dispatch}" -tA -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('auth_sessions','refresh_token_records');" | tr -d '[:space:]')"
@@ -155,6 +168,14 @@ if [ "$AUTH_TABLE_COUNT" != "2" ]; then
   exit 1
 fi
 pass "auth_sessions and refresh_token_records tables exist"
+
+info "Verifying MVP-02 Customer/Task tables exist..."
+MVP02_TABLE_COUNT="$(docker compose exec -T db psql -U "${POSTGRES_USER:-dispatch_user}" -d "${POSTGRES_DB:-dispatch}" -tA -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('customers','customer_destinations','customer_master_searches','delivery_tasks','delivery_task_items','task_references','task_events');" | tr -d '[:space:]')"
+if [ "$MVP02_TABLE_COUNT" != "7" ]; then
+  fail "Expected all 7 MVP-02 tables to exist, found ${MVP02_TABLE_COUNT}/7"
+  exit 1
+fi
+pass "MVP-02 Customer/Task tables exist (7/7)"
 
 # ── 7. Database integration tests ────────────────────────────────────────────
 # Run in a throwaway container built from the Dockerfile's "builder" stage
@@ -177,22 +198,30 @@ docker run --rm \
   sh -c "npm run test:integration && npm run test:e2e"
 pass "Database integration tests passed"
 
-info "Verifying test suites left no residual session/refresh-token rows..."
+info "Verifying test suites left no residual session/refresh-token rows (count returned to baseline)..."
 SESSION_COUNT="$(docker compose exec -T db psql -U "${POSTGRES_USER:-dispatch_user}" -d "${POSTGRES_DB:-dispatch}" -tA -c "SELECT count(*) FROM auth_sessions;" | tr -d '[:space:]')"
 TOKEN_COUNT="$(docker compose exec -T db psql -U "${POSTGRES_USER:-dispatch_user}" -d "${POSTGRES_DB:-dispatch}" -tA -c "SELECT count(*) FROM refresh_token_records;" | tr -d '[:space:]')"
-if [ "$SESSION_COUNT" != "0" ] || [ "$TOKEN_COUNT" != "0" ]; then
-  fail "Expected 0 residual sessions/refresh tokens after test cleanup, found ${SESSION_COUNT} session(s), ${TOKEN_COUNT} token(s)"
+if [ "$SESSION_COUNT" != "$BASELINE_SESSION_COUNT" ] || [ "$TOKEN_COUNT" != "$BASELINE_TOKEN_COUNT" ]; then
+  fail "Expected session/refresh-token counts to return to baseline (${BASELINE_SESSION_COUNT}/${BASELINE_TOKEN_COUNT}) after test cleanup, found ${SESSION_COUNT} session(s), ${TOKEN_COUNT} token(s)"
   exit 1
 fi
-pass "No residual test sessions or refresh-token records (0/0)"
+pass "No residual test sessions or refresh-token records (${SESSION_COUNT}/${TOKEN_COUNT}, matching baseline)"
 
-info "Re-confirming no default User exists after the test suite ran..."
+info "Re-confirming the User count returned to baseline after the test suite ran (no residual test Users, operator account untouched)..."
 POST_TEST_USER_COUNT="$(docker compose exec -T db psql -U "${POSTGRES_USER:-dispatch_user}" -d "${POSTGRES_DB:-dispatch}" -tA -c "SELECT count(*) FROM users;" | tr -d '[:space:]')"
-if [ "$POST_TEST_USER_COUNT" != "0" ]; then
-  fail "Expected 0 Users after test cleanup, found ${POST_TEST_USER_COUNT}"
+if [ "$POST_TEST_USER_COUNT" != "$BASELINE_USER_COUNT" ]; then
+  fail "Expected User count to return to baseline (${BASELINE_USER_COUNT}) after test cleanup, found ${POST_TEST_USER_COUNT}"
   exit 1
 fi
-pass "No residual test Users (0 rows in users)"
+pass "User count returned to baseline after test cleanup (${POST_TEST_USER_COUNT})"
+
+info "Verifying MVP-02 test suites left no Customer/Task residue (test suites clean only records they created)..."
+MVP02_RESIDUE_COUNT="$(docker compose exec -T db psql -U "${POSTGRES_USER:-dispatch_user}" -d "${POSTGRES_DB:-dispatch}" -tA -c "SELECT (SELECT count(*) FROM customers) + (SELECT count(*) FROM customer_destinations) + (SELECT count(*) FROM customer_master_searches) + (SELECT count(*) FROM delivery_tasks) + (SELECT count(*) FROM delivery_task_items) + (SELECT count(*) FROM task_references) + (SELECT count(*) FROM task_events);" | tr -d '[:space:]')"
+if [ "$MVP02_RESIDUE_COUNT" != "0" ]; then
+  fail "Expected 0 residual Customer/Task rows after test cleanup, found ${MVP02_RESIDUE_COUNT}"
+  exit 1
+fi
+pass "No residual Customer/Task rows (0 across all 7 MVP-02 tables)"
 
 # ── Summary ────────────────────────────────────────────────────────────────────
 echo "=============================================="

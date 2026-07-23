@@ -21,8 +21,17 @@ const API_ROOT = path.resolve(__dirname, "..");
 const prisma = new PrismaClient();
 
 describe("Identity/Role database integration", () => {
+  // Captured once, before the seed-idempotency test runs `db:seed` below.
+  // MVP-02 onward: a real operator-created SUPER_ADMIN may legitimately
+  // exist (AUTH-001's bootstrap CLI is a manual, operator-only action —
+  // CLAUDE.md §12), so this suite no longer asserts the User table is
+  // empty. It instead asserts the system-role seed never creates, alters,
+  // or removes a User, by comparing against this baseline.
+  let baselineUserCount: number;
+
   beforeAll(async () => {
     await prisma.$connect();
+    baselineUserCount = await prisma.user.count();
   });
 
   afterAll(async () => {
@@ -46,9 +55,9 @@ describe("Identity/Role database integration", () => {
     }
   });
 
-  it("does not contain a default User", async () => {
+  it("the system-role seed never creates a default User (User count matches the pre-suite baseline)", async () => {
     const userCount = await prisma.user.count();
-    expect(userCount).toBe(0);
+    expect(userCount).toBe(baselineUserCount);
   });
 
   it(
@@ -63,6 +72,11 @@ describe("Identity/Role database integration", () => {
   it("role count stays at exactly six after re-seeding", async () => {
     const roleCount = await prisma.role.count();
     expect(roleCount).toBe(6);
+  });
+
+  it("re-seeding still creates no default User (User count still matches baseline)", async () => {
+    const userCount = await prisma.user.count();
+    expect(userCount).toBe(baselineUserCount);
   });
 
   it("enforces the unique role-code constraint", async () => {

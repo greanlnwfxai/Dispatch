@@ -51,6 +51,15 @@ model User {
   roleAssignments UserRoleAssignment[]
   authSessions    AuthSession[]
 
+  // ── MVP-02 back-relations. Restrict (never Cascade) on every FK pointing
+  // at User below preserves Customer Master search evidence, Task creator
+  // attribution, and append-only Task status history even if a User row is
+  // ever deactivated — see CLAUDE.md §20 (append-only history).
+  customerMasterSearches CustomerMasterSearch[]
+  createdDeliveryTasks   DeliveryTask[]         @relation("DeliveryTaskCreatedBy")
+  updatedDeliveryTasks   DeliveryTask[]         @relation("DeliveryTaskUpdatedBy")
+  taskEvents             TaskEvent[]
+
   @@unique([loginIdNormalized])
   @@map("users")
 }
@@ -133,4 +142,247 @@ model UserRoleAssignment {
   @@index([userId])
   @@index([roleId])
   @@map("user_role_assignments")
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// MVP-02 — Customer and Task Creation
+// ═══════════════════════════════════════════════════════════════════════
+//
+// Traceability: BDR-CUSTOMER-001 (Option C, approved 2026-07-20),
+// BDR-CUSTOMER-002 (Option B, approved 2026-07-20), BR-TASK-003 through
+// BR-TASK-010, BR-DATA-003, VR-TASK-001a (Dispatch Knowledge Topic 06 §11).
+//
+// BDR-CUSTOMER-003 (exact frozen-snapshot field set beyond the approved
+// minimum of destination name + address + Destination Source) and
+// BDR-TASK-001 (mandatory business reference-number set) remain OPEN
+// business decisions — see docs/CTO_SUMMARY_MVP_02.md. The snapshot column
+// set below and the flexible TaskReference model are technical
+// implementations constrained by the already-approved rules; neither
+// resolves its BDR.
+//
+// `DeliveryTaskStatus` models the full 10-value conceptual Main Task Status
+// lifecycle (Topic 04 §5) so the enum never needs a breaking alteration in
+// a future milestone — only DRAFT and WAITING_PREPARATION are reachable
+// through any API in MVP-02.
+
+enum DeliveryTaskStatus {
+  DRAFT
+  WAITING_PREPARATION
+  PREPARING
+  READY_FOR_DISPATCH
+  ASSIGNED
+  IN_TRANSIT
+  AT_DESTINATION
+  WAITING_NEXT_ATTEMPT
+  COMPLETED
+  CANCELLED
+
+  @@map("delivery_task_status")
+}
+
+enum DestinationSource {
+  MASTER
+  FREE_TEXT
+
+  @@map("destination_source")
+}
+
+enum FreeTextFallbackReason {
+  NO_SUITABLE_MASTER
+  AD_HOC_DESTINATION
+
+  @@map("free_text_fallback_reason")
+}
+
+/// Read-only Customer Master (BDR-CUSTOMER-001/002). No create/edit/delete
+/// endpoint exists in MVP-02 — rows are inserted only by direct, manual,
+/// operator-authorized database action, never by application code, a seed,
+/// or a migration.
+model Customer {
+  id        String   @id @default(uuid()) @db.Uuid
+  code      String?  @db.VarChar(64)
+  name      String   @db.VarChar(255)
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  destinations CustomerDestination[]
+  tasks        DeliveryTask[]
+
+  @@unique([code])
+  @@index([name])
+  @@map("customers")
+}
+
+/// Read-only Customer Destination Master (BDR-CUSTOMER-001/002). No
+/// create/edit/delete endpoint exists in MVP-02.
+model CustomerDestination {
+  id                   String   @id @default(uuid()) @db.Uuid
+  customerId           String   @map("customer_id") @db.Uuid
+  code                 String?  @db.VarChar(64)
+  destinationName      String   @map("destination_name") @db.VarChar(255)
+  address              String   @db.Text
+  contactName          String?  @map("contact_name") @db.VarChar(255)
+  contactPhone         String?  @map("contact_phone") @db.VarChar(32)
+  deliveryInstructions String?  @map("delivery_instructions") @db.Text
+  locationReference    String?  @map("location_reference") @db.VarChar(255)
+  accessNotes          String?  @map("access_notes") @db.Text
+  isActive             Boolean  @default(true) @map("is_active")
+  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // onDelete: Restrict — a Customer with any destination (Master or
+  // referenced by a historical Task) must never be silently cascade-deleted.
+  customer Customer       @relation(fields: [customerId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  tasks    DeliveryTask[]
+
+  @@index([customerId])
+  @@index([destinationName])
+  @@map("customer_destinations")
+}
+
+/// Server-verifiable evidence that a Customer Master search was performed
+/// (§4.3) — required before any destination (MASTER or FREE_TEXT) may be
+/// attached to a Task. Short-lived by design (`expiresAt`); never stores
+/// secrets, tokens, cookies, or raw request data beyond the normalized
+/// query text.
+model CustomerMasterSearch {
+  id                            String   @id @default(uuid()) @db.Uuid
+  searchedByUserId              String   @map("searched_by_user_id") @db.Uuid
+  normalizedQuery                String   @map("normalized_query") @db.VarChar(120)
+  matchedCustomerDestinationIds String[] @map("matched_customer_destination_ids")
+  resultCount                    Int      @map("result_count")
+  searchedAt                     DateTime @default(now()) @map("searched_at") @db.Timestamptz(6)
+  expiresAt                      DateTime @map("expires_at") @db.Timestamptz(6)
+
+  searchedByUser User           @relation(fields: [searchedByUserId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  tasks          DeliveryTask[]
+
+  @@index([searchedByUserId])
+  @@index([expiresAt])
+  @@map("customer_master_searches")
+}
+
+/// Delivery Task aggregate. DRAFT and WAITING_PREPARATION are the only
+/// statuses reachable through any MVP-02 API (BR-TASK-007/BR-TASK-008).
+/// `customerName` through `snapshotCreatedAt` are the Historical
+/// Destination Snapshot (BR-TASK-009/BR-DATA-003) — immutable once the
+/// Task leaves DRAFT because no endpoint accepts writes to a non-DRAFT
+/// Task (see TasksService).
+model DeliveryTask {
+  id                  String              @id @default(uuid()) @db.Uuid
+  taskNumber          String              @unique @map("task_number") @db.VarChar(32)
+  status              DeliveryTaskStatus  @default(DRAFT)
+  plannedDeliveryDate DateTime?           @map("planned_delivery_date") @db.Date
+  createdByUserId     String              @map("created_by_user_id") @db.Uuid
+  updatedByUserId     String              @map("updated_by_user_id") @db.Uuid
+  submittedAt         DateTime?           @map("submitted_at") @db.Timestamptz(6)
+
+  // Destination source + Historical Destination Snapshot. A CHECK
+  // constraint (see migration SQL) enforces MASTER ⇢ customer/destination
+  // set + no fallback reason, and FREE_TEXT ⇢ no customer/destination +
+  // fallback reason required, at the database level as well as in the
+  // application layer.
+  destinationSource      DestinationSource       @map("destination_source")
+  customerId             String?                 @map("customer_id") @db.Uuid
+  customerDestinationId  String?                 @map("customer_destination_id") @db.Uuid
+  customerSearchId       String                  @map("customer_search_id") @db.Uuid
+  freeTextFallbackReason FreeTextFallbackReason? @map("free_text_fallback_reason")
+
+  customerName            String   @map("customer_name") @db.VarChar(255)
+  destinationName         String   @map("destination_name") @db.VarChar(255)
+  address                 String   @db.Text
+  contactName             String?  @map("contact_name") @db.VarChar(255)
+  contactPhone            String?  @map("contact_phone") @db.VarChar(32)
+  deliveryInstructions    String?  @map("delivery_instructions") @db.Text
+  locationReference       String?  @map("location_reference") @db.VarChar(255)
+  accessNotes             String?  @map("access_notes") @db.Text
+  customerCodeSnapshot    String?  @map("customer_code_snapshot") @db.VarChar(64)
+  destinationCodeSnapshot String?  @map("destination_code_snapshot") @db.VarChar(64)
+  snapshotCreatedAt       DateTime @map("snapshot_created_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // onDelete: Restrict throughout — a Task, its snapshot, and its history
+  // must remain traceable even if the referenced User/Customer/Destination
+  // row is later deactivated (CLAUDE.md §6/§20).
+  createdByUser  User                 @relation("DeliveryTaskCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  updatedByUser  User                 @relation("DeliveryTaskUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  customer       Customer?            @relation(fields: [customerId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  destination    CustomerDestination? @relation(fields: [customerDestinationId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  customerSearch CustomerMasterSearch @relation(fields: [customerSearchId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  // onDelete: Cascade — items/references exist only as children of their own
+  // Task (never shared, never independently meaningful) and there is no
+  // Task-deletion endpoint in this milestone, so this only matters for local
+  // test cleanup. TaskEvent is intentionally restricted below because it is
+  // append-only audit/status history and must not be cascade-deleted.
+  items      DeliveryTaskItem[]
+  references TaskReference[]
+  events     TaskEvent[]
+
+  @@index([status])
+  @@index([plannedDeliveryDate])
+  @@index([createdByUserId])
+  @@index([customerSearchId])
+  @@map("delivery_tasks")
+}
+
+/// Planned goods line (planned only — no stock deduction, no loaded/
+/// delivered quantity, no serial/lot/barcode).
+model DeliveryTaskItem {
+  id              String   @id @default(uuid()) @db.Uuid
+  taskId          String   @map("task_id") @db.Uuid
+  lineNumber      Int      @map("line_number")
+  description     String   @db.VarChar(500)
+  plannedQuantity Decimal  @map("planned_quantity") @db.Decimal(18, 3)
+  unit            String   @db.VarChar(32)
+  notes           String?  @db.VarChar(500)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  task DeliveryTask @relation(fields: [taskId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([taskId, lineNumber])
+  @@index([taskId])
+  @@map("delivery_task_items")
+}
+
+/// Optional, flexible business-reference child record (BDR-TASK-001 —
+/// OPEN). No reference type is mandatory in this milestone; the unique
+/// constraint below only rejects an exact duplicate type/value pair on the
+/// same Task.
+model TaskReference {
+  id             String   @id @default(uuid()) @db.Uuid
+  taskId         String   @map("task_id") @db.Uuid
+  referenceType  String   @map("reference_type") @db.VarChar(64)
+  referenceValue String   @map("reference_value") @db.VarChar(128)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  task DeliveryTask @relation(fields: [taskId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([taskId, referenceType, referenceValue])
+  @@index([taskId])
+  @@map("task_references")
+}
+
+/// Append-only Task status-history entry — a row is never updated or
+/// deleted, only created (CLAUDE.md §5 append-only history).
+model TaskEvent {
+  id             String              @id @default(uuid()) @db.Uuid
+  taskId         String              @map("task_id") @db.Uuid
+  eventType      String              @map("event_type") @db.VarChar(64)
+  previousStatus DeliveryTaskStatus? @map("previous_status")
+  newStatus      DeliveryTaskStatus  @map("new_status")
+  actorUserId    String              @map("actor_user_id") @db.Uuid
+  occurredAt     DateTime            @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  /// Safe, non-sensitive metadata only — never a password/token/hash or Prisma internals.
+  metadata       Json?
+
+  task      DeliveryTask @relation(fields: [taskId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  actorUser User         @relation(fields: [actorUserId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([taskId])
+  @@map("task_events")
 }

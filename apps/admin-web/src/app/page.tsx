@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "./auth-context";
 
@@ -51,13 +52,18 @@ export default function HomePage() {
             <dd className="mt-1 text-base">{principal.roleCodes.join(", ") || "(none assigned)"}</dd>
           </div>
           <div>
-            <dt className="text-sm font-medium text-slate-500">Foundation status</dt>
-            <dd className="mt-1 text-base">
-              AUTH-001 — authentication and RBAC foundation. No business workflow is implemented yet.
-            </dd>
+            <dt className="text-sm font-medium text-slate-500">Milestone</dt>
+            <dd className="mt-1 text-base">MVP-02 — Customer and Task Creation</dd>
           </div>
         </dl>
       </div>
+
+      <Link
+        href="/tasks"
+        className="self-start rounded bg-slate-900 px-4 py-2 text-sm font-medium text-white"
+      >
+        งานจัดส่ง (Delivery Tasks)
+      </Link>
 
       <button
         type="button"

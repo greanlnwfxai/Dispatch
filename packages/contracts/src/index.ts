@@ -81,3 +81,162 @@ export interface LoginResponseBody extends AccessTokenResponse {
 export function buildAuthUrl(apiBaseUrl: string, path: string): string {
   return `${apiBaseUrl.replace(/\/+$/, "")}${path}`;
 }
+
+/**
+ * Customer/Destination Master search and Delivery Task creation contracts
+ * (MVP-02). Shapes only — DTO validation lives in `apps/api`. Decimal
+ * quantities are carried as strings end-to-end (JSON has no fixed-point
+ * decimal type) so the client, server, and tests all agree on precision.
+ */
+import type {
+  DeliveryTaskStatus,
+  DestinationSource,
+  FreeTextFallbackReason,
+} from "@dispatch/shared-types";
+
+export const CUSTOMER_MASTER_SEARCH_PATH = "/customer-master/search" as const;
+export const DELIVERY_TASKS_PATH = "/tasks" as const;
+
+export function buildDeliveryTaskPath(taskId: string): string {
+  return `${DELIVERY_TASKS_PATH}/${taskId}`;
+}
+
+export function buildDeliveryTaskSubmitPath(taskId: string): string {
+  return `${DELIVERY_TASKS_PATH}/${taskId}/submit`;
+}
+
+export interface CustomerMasterSearchRequestBody {
+  query: string;
+}
+
+export interface CustomerMasterSearchResultDto {
+  customerId: string;
+  customerCode: string | null;
+  customerName: string;
+  customerDestinationId: string;
+  destinationCode: string | null;
+  destinationName: string;
+  address: string;
+  contactName: string | null;
+  contactPhone: string | null;
+  deliveryInstructions: string | null;
+  locationReference: string | null;
+  accessNotes: string | null;
+}
+
+export interface CustomerMasterSearchResponseBody {
+  searchId: string;
+  results: CustomerMasterSearchResultDto[];
+  expiresAt: string;
+}
+
+export interface DeliveryTaskItemDto {
+  lineNumber: number;
+  description: string;
+  /** Decimal serialized as a string (e.g. "10.500") — never a JS number. */
+  plannedQuantity: string;
+  unit: string;
+  notes: string | null;
+}
+
+export interface TaskReferenceDto {
+  referenceType: string;
+  referenceValue: string;
+}
+
+/**
+ * Destination-selection fields shared by create and PATCH. `searchId` is
+ * always required (§4.3 — search-first applies to both MASTER and
+ * FREE_TEXT). Master-source snapshot fields supplied by the client are
+ * advisory only — the server always loads canonical values from the
+ * database and ignores conflicting client input for MASTER selections.
+ */
+export interface DestinationSelectionRequestBody {
+  searchId: string;
+  destinationSource: DestinationSource;
+  customerId?: string | null;
+  customerDestinationId?: string | null;
+  freeTextFallbackReason?: FreeTextFallbackReason | null;
+  customerName?: string;
+  destinationName?: string;
+  address?: string;
+  contactName?: string | null;
+  contactPhone?: string | null;
+  deliveryInstructions?: string | null;
+  locationReference?: string | null;
+  accessNotes?: string | null;
+}
+
+export interface CreateDeliveryTaskRequestBody extends DestinationSelectionRequestBody {
+  plannedDeliveryDate?: string | null;
+  items?: DeliveryTaskItemDto[];
+  references?: TaskReferenceDto[];
+}
+
+/** All fields optional — PATCH only touches fields explicitly present in the body (no mass assignment). */
+export interface UpdateDeliveryTaskDraftRequestBody {
+  searchId?: string;
+  destinationSource?: DestinationSource;
+  customerId?: string | null;
+  customerDestinationId?: string | null;
+  freeTextFallbackReason?: FreeTextFallbackReason | null;
+  customerName?: string;
+  destinationName?: string;
+  address?: string;
+  contactName?: string | null;
+  contactPhone?: string | null;
+  deliveryInstructions?: string | null;
+  locationReference?: string | null;
+  accessNotes?: string | null;
+  plannedDeliveryDate?: string | null;
+  items?: DeliveryTaskItemDto[];
+  references?: TaskReferenceDto[];
+}
+
+export interface DeliveryTaskEventDto {
+  eventType: string;
+  previousStatus: DeliveryTaskStatus | null;
+  newStatus: DeliveryTaskStatus;
+  actorUserId: string;
+  occurredAt: string;
+}
+
+export interface DeliveryTaskSummaryDto {
+  id: string;
+  taskNumber: string;
+  status: DeliveryTaskStatus;
+  plannedDeliveryDate: string | null;
+  destinationSource: DestinationSource;
+  destinationName: string;
+  customerName: string;
+  createdByUserId: string;
+  createdAt: string;
+}
+
+export interface DeliveryTaskDetailDto extends DeliveryTaskSummaryDto {
+  address: string;
+  contactName: string | null;
+  contactPhone: string | null;
+  deliveryInstructions: string | null;
+  locationReference: string | null;
+  accessNotes: string | null;
+  customerId: string | null;
+  customerDestinationId: string | null;
+  customerCodeSnapshot: string | null;
+  destinationCodeSnapshot: string | null;
+  freeTextFallbackReason: FreeTextFallbackReason | null;
+  submittedAt: string | null;
+  updatedByUserId: string;
+  items: DeliveryTaskItemDto[];
+  references: TaskReferenceDto[];
+  events: DeliveryTaskEventDto[];
+}
+
+export interface ListDeliveryTasksResponseBody {
+  items: DeliveryTaskSummaryDto[];
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
+export type { DeliveryTaskStatus, DestinationSource, FreeTextFallbackReason } from "@dispatch/shared-types";

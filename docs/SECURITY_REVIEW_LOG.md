@@ -154,5 +154,201 @@ HIGH/CRITICAL finding, accepted or otherwise.
 
 ---
 
+## MVP-02 — 2026-07-22
+
+### No new dependencies added — no HIGH/CRITICAL findings
+
+MVP-02 introduces no new npm dependency in any workspace (Prisma schema
+additions and NestJS/Next.js code only use packages already present since
+AUTH-001). `npm audit` after the full change: **0 vulnerabilities**. No
+`.security-accepted-risks` entry required.
+
+### Search-first evidence (`CustomerMasterSearch`) — no secret/token material, short-lived, revalidated at submit
+
+The server-verifiable search-evidence record stores only
+`searchedByUserId`, a bounded normalized query string, matched result ids,
+a count, and timing fields — never a raw request, cookie, or token value.
+Expiry (30 minutes) and ownership are enforced at the point a destination
+is selected (create/edit), and a cross-user or expired `searchId` is
+rejected with a single generic message so the response never discloses
+whether a foreign `searchId` exists. Covered by
+`src/tasks/tasks.service.spec.ts` and `apps/api/test/tasks.e2e-spec.ts`.
+
+**Updated 2026-07-23 (blocking review finding remediation):** the
+create/edit-time check above is necessary but not sufficient — evidence
+can expire, or a MASTER destination can be deactivated, between DRAFT
+save and submission. `PrismaDeliveryTaskRepository.submit` now re-reads
+the linked `CustomerMasterSearch` row and, for MASTER, a fresh
+active-Customer/active-CustomerDestination lookup, inside the same
+transaction as the DRAFT → WAITING_PREPARATION status transition, and
+rejects (via the pure `validateSubmitSearchEvidence` function in
+`packages/domain`) before any write if the evidence is missing, foreign,
+expired, out of chronological order, or — for MASTER — no longer covered
+by the search's matched set or no longer active. Every failure mode
+returns the identical generic `SEARCH_EVIDENCE_INVALID` error via `422`,
+preserving the same anti-disclosure property as the create/edit-time
+check. See `docs/CTO_SUMMARY_MVP_02.md` "Issues Found" for the full
+finding and fix, and the new
+`apps/api/src/infrastructure/database/repositories/prisma-delivery-task.repository.spec.ts` for atomicity coverage (no write occurs on a failed
+revalidation).
+
+### RBAC — resolved from PostgreSQL per-request, never from JWT/client claims
+
+`TasksController` and `CustomerMasterController` reuse the existing
+AUTH-001 `RolesGuard` + `@Roles(...)` pattern unchanged; authorization
+continues to come from `JwtAuthenticationGuard`'s per-request database
+re-resolution of role codes (see `apps/api/src/auth/guards/jwt-
+authentication.guard.ts`), never from the access token's own claims.
+Verified via `apps/api/test/tasks.e2e-spec.ts`: 401 with no token, 403 for
+an insufficient role (STOCK/INTERNAL_DELIVERY_EMPLOYEE/MANAGEMENT_AUDITOR
+attempting create), and that SUPER_ADMIN-equivalent authorization never
+bypasses business-completeness validation at submit.
+
+### Mass assignment — explicit DTO allowlists, `forbidNonWhitelisted` global pipe
+
+`CreateDeliveryTaskDto`/`UpdateDeliveryTaskDraftDto` enumerate every
+accepted field explicitly; the existing global `ValidationPipe({
+whitelist: true, forbidNonWhitelisted: true })` (unchanged from AUTH-001)
+rejects any unknown property. `id`, `taskNumber`, `createdByUserId`, and
+`status` can never be set via PATCH — they are not present in the DTO at
+all, so the global pipe rejects any attempt to submit them.
+
+### IDOR / IDOR-adjacent (searchId reuse, IDs) — reviewed, no finding
+
+`GET /tasks/:id` and `PATCH /tasks/:id` take an opaque UUID and are gated
+by the same read/write RBAC roles as the list endpoint (no per-Task owner
+check beyond role, matching Dispatch Knowledge Topic 03's operational-scope
+model for Dispatcher/Admin/Super Admin, who see "all tasks" per the
+approved permission matrix). A `searchId` belonging to a different user is
+rejected (see above). `customerDestinationId` supplied for a MASTER
+selection is re-verified server-side against both the active-Master table
+and the specific search's matched-id set — a client cannot attach an
+arbitrary/foreign destination id to a Task.
+
+**Updated 2026-07-23:** `POST /tasks/:id/submit` now applies the same
+ownership check as create/edit (see "Search-first evidence" above),
+re-checked against the Task's currently-linked search at submit time. One
+noted asymmetry: `PATCH` still allows any DISPATCHER/ADMIN/SUPER_ADMIN to
+edit any DRAFT Task per the "all tasks" model, but `submit` requires the
+linked search's `searchedByUserId` to match the submitting user. This is a
+deliberate, literal implementation of the review finding's ownership
+requirement, not an oversight — see `docs/CTO_SUMMARY_MVP_02.md`
+"Remaining Work" for the full note on when this could matter for a future
+multi-user hand-off workflow.
+
+### Snapshot integrity — server-authoritative, immutable once non-DRAFT
+
+For `destinationSource: "MASTER"`, all snapshot columns are loaded from
+the canonical `Customer`/`CustomerDestination` rows server-side
+(`TasksService.resolveDestinationSelection`) — conflicting client-supplied
+values are discarded, not merged. No endpoint writes snapshot columns once
+a Task leaves `DRAFT` (`PATCH` is rejected with 409 for a non-DRAFT Task).
+Verified by `apps/api/test/delivery-task.integration-spec.ts` (`Task
+snapshot remains unchanged after Master record update`) and
+`apps/api/test/tasks.e2e-spec.ts` (edit-after-submit rejected).
+
+**Updated 2026-07-23 (independent Codex blocking review remediation):**
+`PrismaDeliveryTaskRepository.updateDraft` and `submit` now acquire a
+PostgreSQL row lock on the target `delivery_tasks` row with
+`SELECT ... FOR UPDATE` at the start of their existing interactive
+transactions. Both methods then re-read current Task state after the lock is
+held and validate against that fresh data before any write. A queued edit
+therefore observes a Task already submitted by a competing transaction and
+fails without parent, destination snapshot, item, reference, or
+`TASK_UPDATED` mutation.
+
+### Task status-history audit FK — RESTRICT, not cascade
+
+The independent Codex review found that `TaskEvent -> DeliveryTask ON DELETE
+CASCADE` was inconsistent with append-only audit/status-history
+requirements. The already-applied
+`20260722135828_customer_and_task_creation` migration was not edited. The
+new additive migration
+`apps/api/prisma/migrations/20260723093000_task_event_delete_restrict/migration.sql`
+only drops and recreates `task_events_task_id_fkey` as `ON DELETE RESTRICT
+ON UPDATE CASCADE`; it deletes no data and removes no table, column, enum,
+index, or unrelated constraint. Covered by a real PostgreSQL integration
+test that direct parent `DeliveryTask` deletion is rejected while a
+`TaskEvent` exists.
+
+### Submit concurrency — one transition, one event
+
+`submit` uses the same row-lock pattern as `updateDraft`: lock first,
+re-read Task/items/references/search evidence after the lock, validate DRAFT
+state and all submission/search-evidence invariants, then transition to
+`WAITING_PREPARATION` and append `TASK_SUBMITTED`. Real PostgreSQL
+concurrency tests coordinate independent connections so two submitters block
+on the same row; exactly one succeeds and exactly one `TASK_SUBMITTED` event
+is persisted. SUPER_ADMIN follows the same invariants.
+
+### Search/enumeration abuse — bounded query, bounded result set, bounded rate by existing global throttle
+
+`CustomerMasterSearchDto.query` is length-bounded (1-120); the repository
+always applies `take: 20`. No endpoint returns an unbounded dump of
+`Customer`/`CustomerDestination`. `POST /customer-master/search` is not
+additionally throttled beyond the existing per-route defaults — flagged
+as a remaining-work item (see CTO Summary), not a FAIL: it requires
+authentication and an authorized role first, unlike the public
+`/auth/login` endpoint that AUTH-001 explicitly rate-limits.
+
+### Error handling — generic messages only, no Prisma/SQL/stack leakage
+
+Every thrown exception in `TasksService`/`CustomerMasterService` uses a
+fixed, generic message (e.g. "Invalid or expired Customer Master search
+reference."); Nest's default exception filter sanitizes any uncaught
+error into a generic 500. Verified by
+`apps/api/test/tasks.e2e-spec.ts` (asserts response bodies never match
+`stack|passwordHash|prisma|postgres`).
+
+### Database integration/e2e/Playwright tests — verified clean residue
+
+`apps/api/test/customer-master.integration-spec.ts`,
+`apps/api/test/delivery-task.integration-spec.ts`,
+`apps/api/test/tasks.e2e-spec.ts`, and `e2e/tests/task-creation.spec.ts`
+each create only their own uniquely-scoped test Users/Customers/
+Destinations/Searches/Tasks and delete exactly those rows afterward.
+Verified via direct `psql` counts after a full local run of every
+verification script: `customers`=0, `customer_destinations`=0,
+`customer_master_searches`=0, `delivery_tasks`=0, `delivery_task_items`=0,
+`task_references`=0, `task_events`=0, `users`/`auth_sessions`/
+`refresh_token_records` returned to their pre-suite baseline (the real
+operator's own rows) — no residue, no impact on the operator account or
+the six seeded roles.
+
+**Updated 2026-07-23:** the new submit-time revalidation tests in
+`delivery-task.integration-spec.ts` (foreign-user search evidence) and
+`tasks.e2e-spec.ts` (foreign-user search evidence, expired search
+evidence) create one additional uniquely-scoped test User each; both
+files track and delete exactly those rows in `afterAll` (after the
+`CustomerMasterSearch`/`DeliveryTask` rows referencing them, respecting
+the `onDelete: Restrict` FK). Re-verified zero residue after a full local
+run including these new tests. `prisma-delivery-task.repository.spec.ts`
+uses a fully mocked Prisma transaction client (no real database
+connection), so it has no residue surface at all.
+
+**Updated 2026-07-23 (consolidated remediation pass):** real PostgreSQL
+tests were added for concurrent submit/submit, submit-winning edit/submit,
+edit-winning edit/submit, and direct parent delete rejection under the
+restrictive TaskEvent FK. Test cleanup deletes only test-owned rows and now
+removes test-owned `task_events` before test-owned `delivery_tasks`, in FK
+safe order. Remote CI remains **NOT YET RUN**.
+
+### Pre-existing stale-baseline assertions found and fixed (not an MVP-02 regression)
+
+`scripts/db-verify.sh` and `apps/api/test/identity-role.integration-
+spec.ts` both hardcoded "User count must be exactly 0", written before
+AUTH-001's operator bootstrap CLI existed. With a real operator
+SUPER_ADMIN now present (as this task's instructions state explicitly),
+both would have spuriously failed regardless of MVP-02's own changes.
+Fixed to compare against a captured pre-suite baseline instead of a
+hardcoded zero — see `docs/CTO_SUMMARY_MVP_02.md` Issues Found. No
+security regression: the checks still fail loudly if migrate/seed/tests
+ever create an unexpected User or leave a residual session.
+
+**No entries in `.security-accepted-risks` were required for MVP-02** — no
+HIGH/CRITICAL finding, accepted or otherwise.
+
+---
+
 <!-- Future accepted-risk entries go below this line, in the format described
      in docs/SECURITY_PATCH_POLICY.md -->

@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { buildHealthUrl, isHealthResponse, isReadinessResponse } from "./index";
+import {
+  buildDeliveryTaskPath,
+  buildDeliveryTaskSubmitPath,
+  buildHealthUrl,
+  CUSTOMER_MASTER_SEARCH_PATH,
+  DELIVERY_TASKS_PATH,
+  isHealthResponse,
+  isReadinessResponse,
+} from "./index";
 
 describe("buildHealthUrl", () => {
   it("appends /health to a base URL without a trailing slash", () => {
@@ -35,5 +43,20 @@ describe("isReadinessResponse", () => {
   it("rejects malformed payloads", () => {
     expect(isReadinessResponse(null)).toBe(false);
     expect(isReadinessResponse({ status: "ok", service: "dispatch-api", database: "down" })).toBe(false);
+  });
+});
+
+describe("MVP-02 task/customer-master paths", () => {
+  it("exposes stable literal paths", () => {
+    expect(CUSTOMER_MASTER_SEARCH_PATH).toBe("/customer-master/search");
+    expect(DELIVERY_TASKS_PATH).toBe("/tasks");
+  });
+
+  it("builds a Task detail path from an id", () => {
+    expect(buildDeliveryTaskPath("abc-123")).toBe("/tasks/abc-123");
+  });
+
+  it("builds a Task submit path from an id", () => {
+    expect(buildDeliveryTaskSubmitPath("abc-123")).toBe("/tasks/abc-123/submit");
   });
 });

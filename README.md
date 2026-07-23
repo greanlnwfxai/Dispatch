@@ -5,16 +5,19 @@ covering task creation, stock preparation, assignment, internal delivery
 (GPS check-in, evidence, recipient capture), external courier recording,
 returned goods, reopen, emergency override, and audit/reporting.
 
-**Current milestone: AUTH-001 — Authentication and RBAC Foundation.**
-This repository contains the monorepo skeleton, database-aware
-health/readiness endpoints, the Identity/Role/Session Prisma schema, and a
-full authentication foundation: login/refresh/logout with short-lived JWT
-access tokens, rotating opaque refresh tokens, server-side session/
-revocation storage, RBAC guards, and minimal login/session shells for
-Admin Web and Mobile/PWA. **No Dispatch business workflow is implemented
-yet.** Business knowledge and rules live in `Dispatch Knowledge/` (Topics
-01–11) and remain the source of truth; `CLAUDE.md` governs engineering
-workflow and safety.
+**Current milestone: MVP-02 — Customer and Task Creation.** Prior
+milestone AUTH-001 (Authentication and RBAC Foundation) is complete:
+login/refresh/logout with short-lived JWT access tokens, rotating opaque
+refresh tokens, server-side session/revocation storage, and RBAC guards.
+MVP-02 adds the first Dispatch business capability: read-only Customer/
+Destination Master search (search-first, BDR-CUSTOMER-001/002), and
+Delivery Task creation/editing/submission (DRAFT → WAITING_PREPARATION)
+with an immutable Historical Destination Snapshot. **No Preparation,
+Assignment, Delivery, Return, Reopen, Override, or Reporting workflow is
+implemented yet.** Business knowledge and rules live in
+`Dispatch Knowledge/` (Topics 01–11) and remain the source of truth;
+`CLAUDE.md` governs engineering workflow and safety. See
+`docs/CTO_SUMMARY_MVP_02.md` for the full report.
 
 ## Architecture overview
 
@@ -129,6 +132,24 @@ never drops, resets, or truncates anything.
   This command is never run automatically by any script, seed, or Docker
   startup, and prompts for the password interactively (hidden input).
 
+## Customer Master search and Delivery Task creation (MVP-02)
+
+- `POST /customer-master/search` — read-only, bounded, active-only search
+  over `Customer`/`CustomerDestination` (no create/edit/delete endpoint
+  exists). Every search is recorded as short-lived, server-verifiable
+  evidence (`CustomerMasterSearch`) required before a destination may be
+  attached to a Task (search-first, BDR-CUSTOMER-001/002).
+- `POST /tasks`, `GET /tasks`, `GET /tasks/:id`, `PATCH /tasks/:id` (DRAFT
+  only), `POST /tasks/:id/submit` (DRAFT → WAITING_PREPARATION). No
+  `DELETE /tasks/:id` exists.
+- Every Task carries an immutable Historical Destination Snapshot
+  (destination name, address, Destination Source, plus supporting fields)
+  that a later Customer Master edit never overwrites.
+- RBAC: SUPER_ADMIN/ADMIN/DISPATCHER may search/create/edit/submit;
+  SUPER_ADMIN/ADMIN/DISPATCHER/STOCK/MANAGEMENT_AUDITOR may read.
+- No Preparation, Assignment, Delivery, Return, Reopen, Override, or
+  Reporting workflow exists yet — see `docs/CTO_SUMMARY_MVP_02.md`.
+
 ## Verification commands
 
 Run in this order before considering a change complete (see `CLAUDE.md` §10
@@ -155,21 +176,23 @@ afterward.
 ```
 Dispatch/
 ├── apps/
-│   ├── admin-web/      # Next.js — Admin Web (+ login/session shell, AUTH-001)
+│   ├── admin-web/      # Next.js — Admin Web (login/session shell + MVP-02 Task screens)
 │   ├── api/             # NestJS — Backend API
 │   │   ├── prisma/       # schema.prisma, migrations/, seed.ts
 │   │   └── src/
 │   │       ├── auth/                       # AUTH-001 — login/refresh/logout, guards, RBAC
 │   │       ├── bootstrap/                  # Operator-only initial SUPER_ADMIN CLI
+│   │       ├── customer-master/            # MVP-02 — read-only Customer Master search
+│   │       ├── tasks/                      # MVP-02 — Delivery Task create/edit/submit
 │   │       └── infrastructure/database/     # PrismaModule/Service, repository adapters
-│   └── mobile-pwa/      # Next.js PWA — Internal Delivery Mobile/PWA (+ login/session shell, AUTH-001)
+│   └── mobile-pwa/      # Next.js PWA — Internal Delivery Mobile/PWA (login/session shell only; no MVP-02 UI)
 ├── packages/
-│   ├── contracts/        # Shared health/readiness + auth API contract
-│   ├── domain/            # Framework-independent Identity/Role/Session record types + repository interfaces
-│   ├── shared-types/      # Service identifiers, health/readiness shape, approved role codes
+│   ├── contracts/        # Shared health/readiness + auth + MVP-02 Task/Customer-Master API contract
+│   ├── domain/            # Framework-independent record types, repository interfaces, business validation
+│   ├── shared-types/      # Service identifiers, health/readiness shape, role/status/enum codes
 │   ├── validation/        # Generic assertion helpers
 │   └── test-utils/        # Shared test assertions
-├── e2e/                   # Playwright foundation reachability suite
+├── e2e/                   # Playwright suite — foundation reachability + MVP-02 Task creation flow
 ├── scripts/               # Verification/security harness scripts (incl. db-verify.sh)
 ├── docs/                  # Technical docs, CTO summaries, security policy
 ├── infra/                 # Reserved for future infra-as-code
@@ -188,10 +211,17 @@ them. See `CLAUDE.md` §9.
 
 ## Current limitations
 
-- No Dispatch business workflow (Customer Master, Delivery Task,
-  Preparation, Assignment, delivery/GPS/evidence, Returns, Emergency
-  Override, reporting) is implemented yet — those begin at MVP-02 per
-  Dispatch Knowledge Topic 11 §21 Implementation Roadmap.
+- No Preparation, Assignment, delivery/GPS/evidence, Returns, Reopen,
+  Emergency Override, Correction Action, or Reporting workflow is
+  implemented yet — those begin at MVP-03+ per Dispatch Knowledge Topic 11
+  §21 Implementation Roadmap.
+- No Customer Master administration (create/edit/delete/merge/import) —
+  MVP-02 is read-only search only; Customer/CustomerDestination rows exist
+  only via direct, manual, operator-authorized database action.
+- BDR-TASK-001 (mandatory business reference-number set) and
+  BDR-CUSTOMER-003 (exact frozen-snapshot field set beyond the approved
+  minimum) remain **OPEN** business decisions — see
+  `docs/CTO_SUMMARY_MVP_02.md`.
 - No user-management or role-management UI, no self-registration, no
   password reset, no MFA/SSO — all explicitly out of scope for AUTH-001.
 - All health/readiness endpoints remain intentionally unauthenticated
