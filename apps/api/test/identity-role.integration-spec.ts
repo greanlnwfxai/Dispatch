@@ -16,6 +16,14 @@ import { PrismaService } from "../src/infrastructure/database/prisma/prisma.serv
  * Data isolation: this suite only reads the seeded system roles (never
  * mutates them) and creates/deletes its own uniquely-scoped test User row.
  * It never truncates or deletes unscoped/unknown data.
+ *
+ * Baseline stability: the User-count baseline below is only valid because
+ * `test/jest-integration.json` runs with `maxWorkers: 1` — other
+ * integration-spec files create/delete their own scoped Users against this
+ * same shared PostgreSQL database, so if two spec files ever ran
+ * concurrently the baseline captured here could be read mid-mutation by
+ * another suite. Do not remove that serialization without re-isolating the
+ * User table (e.g. per-suite schema/transaction isolation).
  */
 const API_ROOT = path.resolve(__dirname, "..");
 const prisma = new PrismaClient();

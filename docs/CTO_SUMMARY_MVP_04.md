@@ -514,10 +514,177 @@ files listed in §20/§21.
 
 ## 27. Remote CI
 
-NOT YET RUN
+**FAILED — remediation pending rerun.** GitHub Actions run `30060682034`
+(triggered by the push of commit `6ea46a6`) reported the `Database
+Integration` job **failed**, in
+`apps/api/test/identity-role.integration-spec.ts`, test `"re-seeding still
+creates no default User (User count still matches baseline)"`:
+
+```
+Expected baselineUserCount: 4
+Received userCount: 0
+```
+
+The `Assignment integration suite` itself (`assignment.integration-spec.ts`)
+passed in that same run — the failure is isolated to the identity-role
+baseline assertion. This remediation (see §29) has been verified locally
+but **has not yet been rerun on remote CI** — that requires the user to push
+this follow-up commit. Remote CI must not be reported as passing until that
+push and its resulting run are observed.
 
 ## 28. Recommended Commit Message
 
 ```
 feat(dispatch): add delivery task assignment
+```
+
+## 29. CI Remediation — Database Integration Test Isolation (follow-up to run 30060682034)
+
+**Confirmed root cause**: `apps/api/test/jest-integration.json` had no
+`maxWorkers`/serialization setting, so Jest ran its integration spec files
+(`identity-role.integration-spec.ts`, `assignment.integration-spec.ts`,
+`auth.integration-spec.ts`, `customer-master.integration-spec.ts`,
+`delivery-task.integration-spec.ts`, `health-readiness.integration-spec.ts`)
+concurrently, across multiple worker processes, all against the same live,
+shared PostgreSQL database (per the repository's intentional single-
+integration-database architecture — see `scripts/db-verify.sh`). Several of
+those suites (`assignment.integration-spec.ts`, `auth.integration-spec.ts`)
+create and later delete their own scoped `User` rows as part of normal test
+setup/teardown. `identity-role.integration-spec.ts` captures a
+`baselineUserCount` once in its own `beforeAll` and compares against it
+twice later in the same file (after re-running the seed script). Because
+other suites were running concurrently in separate workers, that baseline
+could be captured while another suite's fixture Users transiently existed,
+then compared later after that suite's `afterAll` had already deleted them
+— an apparent User-count drop that was really a snapshot of another suite's
+mid-flight fixture data, not a real seed defect. This reproduces the
+observed `4 → 0` mismatch. Confirmed empirically: measuring wall-clock time
+of `npm run test:integration` before the fix (56.8s total, while the six
+suites' own reported durations summed to ~87s) proves suites were running
+overlapped, not sequentially, prior to this change. The exact race window
+was not reproduced locally (timing-dependent, 3 local runs against the
+unfixed config all happened to pass — local hardware has more headroom than
+the CI runner), so this diagnosis rests on the static configuration gap
+plus the proven-overlap timing evidence, not on a reproduced local failure.
+
+Confirming precedent already exists in this repository:
+`apps/api/test/jest-e2e.json` already sets `"maxWorkers": 1` for exactly
+this reason (its e2e spec files share the same live database). Only
+`jest-integration.json` was missing the equivalent setting — an omission,
+not a deliberate design choice.
+
+**Remediation** (2 files changed, 0 files created):
+
+1. `apps/api/test/jest-integration.json` — added `"maxWorkers": 1`,
+   matching the existing `jest-e2e.json` convention. This makes
+   serialization an explicit, repository-owned property of the integration
+   Jest config itself (effective for local runs, CI, and
+   `scripts/db-verify.sh`'s throwaway-container run alike), rather than
+   depending on a `--runInBand`/`--maxWorkers` CLI flag that only some
+   invocations might remember to pass.
+2. `apps/api/test/identity-role.integration-spec.ts` — added a one-block
+   comment above `baselineUserCount` documenting that its stability now
+   depends on `maxWorkers: 1` in `jest-integration.json`, so a future editor
+   does not remove that setting without understanding why it is
+   load-bearing. **No assertion, expectation, or test behavior was
+   changed** — the existing baseline-comparison design (already reviewed:
+   it exists specifically to tolerate a legitimate operator-created
+   `SUPER_ADMIN`, per the comment already in that file from
+   DEV-FOUNDATION-002) is sound once the concurrency that made it volatile
+   is removed. Reviewed per the remediation brief's instruction to check
+   whether the assertion itself needed to change; concluded it does not,
+   because the volatility was never in the assertion — it was in test-file
+   concurrency the assertion had no way to defend against.
+
+**Why this is deterministic**: `maxWorkers: 1` is a hard Jest scheduling
+guarantee, not a timing-dependent mitigation — with one worker, Jest
+physically cannot start a second integration spec file's test bodies (or
+`beforeAll`/`afterAll` hooks) before the previous file's hooks and tests
+have fully completed. No two integration spec files' database-mutating code
+can therefore ever interleave again, eliminating the shared-baseline race
+by construction rather than by making it merely less likely (no sleeps, no
+retries, no timing assumptions).
+
+**Scope discipline**: `maxWorkers: 1` was added only to `jest-integration.json`
+(matches `.integration-spec.ts$` only). It does not touch
+`apps/api/package.json`'s own `jest` block (used for the default `npm test`
+unit-test run — `.spec.ts$`, `rootDir: src`), so unit tests remain fully
+parallel and unaffected. It also does not touch `jest-e2e.json` (already
+correct). Within `assignment.integration-spec.ts`, the intra-test
+concurrency primitives (`waitForBlockedTaskLocks`/`withHeldTaskLock`, which
+open multiple Prisma connections *within a single test* to force real
+Postgres row-lock contention) are unaffected by `maxWorkers` — that setting
+only controls concurrency *between* test files, not connections opened by
+code inside one test — so the MVP-04 concurrency/race coverage in §7/§17 is
+unweakened.
+
+**Verification performed** (all against the real Docker stack —
+`dispatch-db`/`dispatch-api` — never a mocked or in-memory database):
+
+- `npm run test:integration --workspace=apps/api`, run 3 consecutive times
+  after the fix, via the same throwaway-builder-container mechanism
+  `scripts/db-verify.sh` uses (`docker build --target builder` +
+  `docker run --rm --network dispatch_default ...`): all 3 runs — 6/6 test
+  suites, 47/47 tests passed, no flakiness (22.8s / 21.3s / 20.7s).
+- `npm run test:e2e --workspace=apps/api`: 5/5 suites, 39/39 tests passed.
+- `./scripts/verify.sh`: PASS (workspace consistency, lint, typecheck, unit
+  tests, all builds, Prisma generate/validate, compose config validation,
+  token-storage scan).
+- `./scripts/docker-verify.sh`: PASS (build/start + health checks, all 4
+  services; `dispatch-db`/`dispatch-api` healthy).
+- `./scripts/db-verify.sh`: PASS end-to-end, including the real
+  `test:integration && test:e2e` run inside the dedicated builder-stage
+  container attached to the Docker network (the same non-destructive
+  mechanism used for the original MVP-04 sign-off) — migration
+  status/deploy, idempotent seed, 6/6 roles, User count unchanged and
+  returned to baseline, zero MVP-02/03/04 residue.
+- `./scripts/api-smoke-test.sh`: PASS (`/health`, `/health/live`,
+  `/health/ready`, `/auth/me` 401, `/auth/login` generic 401).
+- `./scripts/mobile-verify.sh`: PASS (reachability, `/login`, manifest,
+  no token-storage writes, no service worker).
+- `./scripts/security-review.sh`: PASS (dependency audit clear, secret scan
+  clear — the one `DATABASE_URL`-mention warning is pre-existing comment
+  text across multiple unrelated spec files' doc-comments, unrelated to
+  this change, matched before this task as well; Docker safety/config
+  checks clear).
+- `git diff --check`: clean (exit 0, no whitespace errors).
+
+**Database residue after the full battery** (confirmed via `db-verify.sh`'s
+own read-only checks plus direct `psql` inspection): `users` table = 1 row
+(the pre-existing bootstrap `SUPER_ADMIN` operator account, with real
+sessions/tokens from 2026-07-22/23 predating this task — untouched);
+`roles` = exactly 6, matching the approved code set; `auth_sessions` = 3,
+`refresh_token_records` = 4 (both matching the pre-existing operator
+baseline, returned to that baseline after test cleanup, zero test residue);
+all MVP-02 Customer/Task tables and all MVP-04 assignment tables
+(`task_assignments`, `task_current_assignments`,
+`task_assignment_supports`) = 0 rows.
+
+**Docker health**: all 4 services running; `dispatch-db` and `dispatch-api`
+report `(healthy)` (only those two define a healthcheck); `dispatch-admin-web`
+and `dispatch-mobile-pwa` report `Up`, their complete expected status. No
+Docker teardown command was run at any point.
+
+**Exact change scope**:
+- Modified tracked files: **3** (2 remediation files —
+  `apps/api/test/jest-integration.json`,
+  `apps/api/test/identity-role.integration-spec.ts` — plus this CTO Summary,
+  `docs/CTO_SUMMARY_MVP_04.md`)
+- New (untracked) files: **0**
+- Staged files: **0**
+- `git diff --check`: clean
+- No Git write command (`add`/`commit`/`push`/`tag`/`merge`/`rebase`/
+  `reset`/`clean`) was run at any point in this remediation
+- Commit `6ea46a6` was not amended or rewritten — this remediation is
+  scoped for a separate follow-up commit only
+- BDR-ASSIGN-001 through BDR-ASSIGN-005 (§4) are unchanged
+- Topic 07 was not edited
+
+**Commit readiness**: **READY** for a separate follow-up commit (not an
+amend of `6ea46a6`).
+
+**Recommended follow-up commit message**:
+
+```
+test(dispatch): stabilize database integration isolation
 ```
