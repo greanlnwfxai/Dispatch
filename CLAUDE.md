@@ -10,8 +10,13 @@ reporting. Business knowledge lives in `Dispatch Knowledge/` (Topics
 01–11); this file governs engineering workflow and safety, not business
 rules.
 
-**Current milestone: AUTH-001 — Authentication and RBAC Foundation.**
-No Dispatch business workflow is implemented yet.
+**Current milestone: MVP-04 — Delivery Task Assignment.** Prior milestones
+AUTH-001 (Authentication and RBAC Foundation), MVP-02 (Customer and Task
+Creation), and MVP-03 (Preparation and Pre-loading Evidence) are complete.
+MVP-04 adds formal Assignment (`READY_FOR_DISPATCH -> ASSIGNED`) and formal
+reassignment. No start-delivery, DeliveryAttempt, GPS check-in, handover
+evidence, recipient/signature, Return, Reopen, Override, or Reporting
+workflow is implemented yet.
 
 ## 2. Approved Technical Foundation
 
@@ -51,21 +56,25 @@ Local URLs: `http://localhost:6001`, `http://localhost:6002/health`,
 ```
 Dispatch/
 ├── apps/
-│   ├── admin-web/      # Next.js — Super Admin, Admin, Dispatcher, Stock, Management/Auditor; login/session shell (AUTH-001)
-│   ├── api/             # NestJS — health/readiness endpoints; Identity/Role schema; AuthModule (AUTH-001, no business Commands)
+│   ├── admin-web/      # Next.js — Super Admin, Admin, Dispatcher, Stock, Management/Auditor; login/session shell, Task/preparation/assignment screens
+│   ├── api/             # NestJS — health/readiness endpoints; Identity/Role schema; business Commands through MVP-04
 │   │   ├── prisma/       # schema.prisma, migrations/, seed.ts (system roles only, no default User)
 │   │   └── src/
-│   │       ├── auth/                       # AUTH-001 — login/refresh/logout/RBAC, no business workflow
+│   │       ├── auth/                       # AUTH-001 — login/refresh/logout/RBAC
 │   │       ├── bootstrap/                  # Operator-only initial SUPER_ADMIN CLI (never automatic)
-│   │       └── infrastructure/database/     # PrismaModule/Service, Identity/Role/Session repository adapters
-│   └── mobile-pwa/      # Next.js PWA — Internal Delivery Employee; login/session shell (AUTH-001)
+│   │       ├── customer-master/            # MVP-02 — read-only Customer/Destination Master search
+│   │       ├── tasks/                      # MVP-02 — Delivery Task create/edit/submit
+│   │       ├── preparation/                # MVP-03 — preparation, pre-loading evidence, correction governance
+│   │       ├── assignment/                 # MVP-04 — assignment, reassignment, candidates, assigned-tasks record scope
+│   │       └── infrastructure/database/     # PrismaModule/Service, repository adapters
+│   └── mobile-pwa/      # Next.js PWA — Internal Delivery Employee; login/session shell, MVP-04 "My assigned tasks" read-only view
 ├── packages/
-│   ├── contracts/        # Shared health/readiness + auth API contract (business Command/Query DTOs are future work)
-│   ├── domain/            # Framework-independent Identity/Role/Session record types + repository interfaces — no business aggregates yet
-│   ├── shared-types/      # Service identifiers, health/readiness shape, approved role codes
+│   ├── contracts/        # Shared health/readiness + auth + Task/preparation/assignment API contracts
+│   ├── domain/            # Framework-independent record types, repository interfaces, business validation
+│   ├── shared-types/      # Service identifiers, health/readiness shape, role/status/enum codes
 │   ├── validation/        # Generic assertion helpers — no BR-xxx/VR-xxx business rules
 │   └── test-utils/        # Shared health-response test assertions
-├── e2e/                   # Playwright — foundation reachability suite
+├── e2e/                   # Playwright — foundation reachability + MVP-02/MVP-04 flows
 ├── scripts/               # Harness scripts (see §10)
 ├── docs/                  # Technical docs, CTO summaries, security policy
 ├── infra/                 # Reserved for future infra-as-code (empty at this milestone)
@@ -91,20 +100,27 @@ Dispatch/
 
 ## 6. Current Milestone
 
-**AUTH-001** — Authentication and RBAC foundation: JWT access/refresh +
-server-side session/revocation store, Guard layers 1–2 per Dispatch
-Knowledge Topic 11 §10, neutral `loginId`, operator-only SUPER_ADMIN
-bootstrap. See `docs/CTO_SUMMARY_AUTH_001.md` for the full report. Prior
-milestones: `docs/CTO_SUMMARY_DEV_FOUNDATION_001.md`,
-`docs/CTO_SUMMARY_DEV_FOUNDATION_002.md`.
+**MVP-04** — Delivery Task Assignment: `AssignDeliveryTask`
+(`READY_FOR_DISPATCH -> ASSIGNED`), formal reassignment (`ASSIGNED ->
+ASSIGNED`, mandatory reason, stale-write precondition), append-only
+assignment/reassignment history, non-blocking active-workload visibility on
+candidate search, and the Internal Delivery Employee's own record-scoped
+`GET /assigned-tasks` read-only view, per Dispatch Knowledge Topic 11 §21
+Implementation Roadmap. See `docs/CTO_SUMMARY_MVP_04.md` for the full
+report. Prior milestones: `docs/CTO_SUMMARY_DEV_FOUNDATION_001.md`,
+`docs/CTO_SUMMARY_DEV_FOUNDATION_002.md`, `docs/CTO_SUMMARY_AUTH_001.md`,
+`docs/CTO_SUMMARY_MVP_02.md`, `docs/CTO_SUMMARY_MVP_03.md`.
 
 ## 7. Current Next Step
 
-**MVP-02** — Customer and Task Creation (`CreateDeliveryTask`, Customer
-Master search/free-text) per Topic 11 §21 Implementation Roadmap. Requires
-AUTH-001 (complete). Business route-permission matrix, User/Role-management
-UI, and production secret/cookie/domain configuration remain unresolved —
-see `docs/CTO_SUMMARY_AUTH_001.md` Remaining Work.
+**MVP-05 through MVP-09** — Internal Delivery Workflow (Start, Destination
+GPS Check-in, Handover, Recipient/Quantity/Outcome, Normal Closure) per
+Topic 11 §21 Implementation Roadmap. Requires MVP-04 (complete).
+BDR-GPS-001/002/004 (quality threshold) and BDR-EVIDENCE-003/004/010 remain
+open business decisions — see Topic 11 §23. Business route-permission
+matrix, User/Role-management UI, and production secret/cookie/domain
+configuration remain unresolved — see `docs/CTO_SUMMARY_AUTH_001.md`
+Remaining Work.
 
 ---
 

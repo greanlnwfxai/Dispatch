@@ -140,6 +140,35 @@ mounted on the `dispatch_evidence_data` Docker named volume. Production
 storage remains targeted at private S3-compatible object storage behind the
 same API boundary.
 
+## MVP-04 Assignment Review Scope
+
+MVP-04 adds formal Delivery Task Assignment. Automated coverage now also
+includes API e2e/integration checks for RBAC (401/403), initial-assignment
+and reassignment validation (inactive/wrong-role primary or supporting
+user, duplicate support, primary/support overlap, wrong task status, blank
+reassignment reason), record-scope enforcement for
+`GET /assigned-tasks`/`GET /assigned-tasks/:id`, real PostgreSQL
+concurrency (duplicate-assignment race, stale-reassignment race), and a
+direct database-constraint check for the `task_current_assignments`
+primary-key backstop. Manual security review must still inspect:
+
+- `GET /assignment-candidates` never returns `passwordHash`,
+  `loginIdNormalized`, `credentialsEnabled`, session, or refresh-token
+  fields;
+- a supporting-only or unrelated `INTERNAL_DELIVERY_EMPLOYEE` receives
+  `404`, never `403` or task data, from `/assigned-tasks/:id` (existence is
+  never confirmed to an unauthorized caller);
+- supporting employees never receive a code path that grants evidence
+  upload, delivery-action, or proxy/shared/temporary execution authority
+  (BDR-ASSIGN-002/BDR-ASSIGN-003);
+- no assignment or assignment-history `DELETE` route exists, and every
+  assignment-table FK is `ON DELETE RESTRICT` (including the
+  self-referential `previousAssignmentId` FK), never `CASCADE`;
+- the stale-reassignment conflict path leaves zero `TaskAssignment`/
+  `TaskAssignmentSupport`/`TaskEvent` residue from the losing request.
+
+See `docs/SECURITY_REVIEW_LOG.md` "MVP-04" for the full findings review.
+
 ---
 
 ## Future Security Enhancements

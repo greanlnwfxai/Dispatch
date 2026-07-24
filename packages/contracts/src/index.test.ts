@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildAssignedTaskDetailPath,
   buildDeliveryTaskPath,
   buildDeliveryTaskSubmitPath,
   buildHealthUrl,
@@ -7,9 +8,15 @@ import {
   buildPreparationEvidenceDownloadPath,
   buildPreparationPath,
   buildPreparationStartPath,
+  buildTaskAssignmentHistoryPath,
+  buildTaskAssignmentPath,
   PREPARATION_CORRECTIONS_PATH,
+  ASSIGNED_TASKS_PATH,
+  ASSIGNMENT_CANDIDATES_PATH,
   CUSTOMER_MASTER_SEARCH_PATH,
   DELIVERY_TASKS_PATH,
+  isActiveAssignmentWorkloadStatus,
+  isAssignmentType,
   isHealthResponse,
   isReadinessResponse,
 } from "./index";
@@ -73,5 +80,29 @@ describe("MVP-02 task/customer-master paths", () => {
 
   it("builds a Task submit path from an id", () => {
     expect(buildDeliveryTaskSubmitPath("abc-123")).toBe("/tasks/abc-123/submit");
+  });
+});
+
+describe("MVP-04 assignment paths and re-exports", () => {
+  it("exposes stable literal paths for candidate search and my-assigned-tasks", () => {
+    expect(ASSIGNMENT_CANDIDATES_PATH).toBe("/assignment-candidates");
+    expect(ASSIGNED_TASKS_PATH).toBe("/assigned-tasks");
+  });
+
+  it("builds task-assignment and assignment-history paths from a Task id", () => {
+    expect(buildTaskAssignmentPath("task-1")).toBe("/tasks/task-1/assignment");
+    expect(buildTaskAssignmentHistoryPath("task-1")).toBe("/tasks/task-1/assignment/history");
+  });
+
+  it("builds an assigned-task detail path from a Task id", () => {
+    expect(buildAssignedTaskDetailPath("task-1")).toBe("/assigned-tasks/task-1");
+  });
+
+  it("re-exports the centralized assignment-type and active-workload-status guards", () => {
+    expect(isAssignmentType("INITIAL")).toBe(true);
+    expect(isAssignmentType("REASSIGNMENT")).toBe(true);
+    expect(isAssignmentType("NOT_A_TYPE")).toBe(false);
+    expect(isActiveAssignmentWorkloadStatus("ASSIGNED")).toBe(true);
+    expect(isActiveAssignmentWorkloadStatus("DRAFT")).toBe(false);
   });
 });

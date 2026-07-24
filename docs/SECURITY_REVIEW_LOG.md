@@ -426,5 +426,144 @@ HIGH/CRITICAL finding, accepted or otherwise.
 
 ---
 
+## MVP-04 — 2026-07-23
+
+### No new dependencies added — no HIGH/CRITICAL findings
+
+MVP-04 adds Prisma schema, NestJS code, Admin Web code, Mobile/PWA code, and
+tests using dependencies already present in the workspace.
+`./scripts/security-review.sh` reported no HIGH/CRITICAL dependency
+findings. No `.security-accepted-risks` entry was required.
+
+### Record-scope IDOR — enforced at the query, not by fetch-then-check
+
+`GET /assigned-tasks/:id` (`AssignmentService.getMyAssignedTaskDetail`)
+issues a single `taskCurrentAssignment.findFirst` filtered on both
+`taskId` and `primaryAssigneeUserId = principal.userId`; a missing row
+throws the identical `404 NotFoundException` whether the task does not
+exist, belongs to another primary assignee, or lists the caller only as a
+supporting employee. Supporting-employee rows never grant task record
+scope, matching BDR-ASSIGN-002/BR-SECURITY-004. Verified by
+`apps/api/test/assignment.e2e-spec.ts` ("enforces record scope") and
+mirrored Mobile/PWA Vitest coverage
+(`apps/mobile-pwa/src/app/assigned-tasks/[id]/__tests__/page.test.tsx`)
+asserting only task-not-found UI, never task data, on a rejected fetch.
+
+### RBAC — resolved from PostgreSQL per-request, never from JWT/client claims
+
+`AssignmentController` reuses the existing `RolesGuard` + `@Roles(...)`
+pattern unchanged. Candidate search and assign/reassign are restricted to
+`SUPER_ADMIN`/`ADMIN`/`DISPATCHER`; read access additionally includes
+`STOCK`/`MANAGEMENT_AUDITOR`; `/assigned-tasks` is restricted to
+`INTERNAL_DELIVERY_EMPLOYEE` only. Verified by
+`apps/api/test/assignment.e2e-spec.ts`: 401 with no token, 403 for
+STOCK/MANAGEMENT_AUDITOR/INTERNAL_DELIVERY_EMPLOYEE attempting to
+assign/reassign, 403 for MANAGEMENT_AUDITOR calling the candidate endpoint.
+
+### Sensitive candidate-field leakage — reviewed, no finding
+
+`GET /assignment-candidates` (`AssignmentService.listCandidates`) selects
+only `{ id, displayName }` from `User` plus a computed active-task count —
+`passwordHash`, `loginIdNormalized`, `credentialsEnabled`, session, and
+refresh-token fields are never selected, so they cannot leak regardless of
+DTO mapping. Verified by an explicit e2e assertion that the candidate
+response has no `passwordHash`/`loginIdNormalized` field.
+
+### Duplicate-assignment race — PostgreSQL row lock plus a database-level backstop
+
+Initial assignment and reassignment both acquire `SELECT ... FOR UPDATE`
+on the target `delivery_tasks` row before reading status or the current
+assignment pointer, re-validate under that lock, and write
+`TaskAssignment`/`TaskAssignmentSupport`/`TaskCurrentAssignment`/`TaskEvent`
+atomically — the same pattern as `PreparationService`/
+`PrismaDeliveryTaskRepository`. Independent of the lock, the
+`task_current_assignments` primary key on `taskId` is a database-level
+backstop for "at most one current assignment per task"; a direct-Prisma
+integration test inserts two current-assignment rows for the same task
+outside the service layer and asserts the second raises `P2002`
+(`apps/api/test/assignment.integration-spec.ts`, "the
+task_current_assignments primary key protects..."). A real concurrency
+test races two `AssignmentService.assign()` calls against the same
+`READY_FOR_DISPATCH` task on independent PostgreSQL connections (holding
+and releasing the row lock deterministically, as in
+`delivery-task.integration-spec.ts`) and asserts exactly one success, one
+deterministic failure, one current assignment, and exactly one
+`TASK_ASSIGNED` event.
+
+### Stale-reassignment overwrite — precondition compared under the row lock, zero residue on rejection
+
+`PATCH /tasks/:id/assignment` requires `expectedCurrentAssignmentId`; under
+the task row lock, `AssignmentService.reassign` compares it against the
+actual `TaskCurrentAssignment.currentAssignmentId` and returns a
+deterministic `409` (`code: "STALE_ASSIGNMENT"`) on mismatch *before* any
+write — no `TaskAssignment`/`TaskAssignmentSupport`/`TaskEvent` row is
+created for a rejected stale request. A real concurrency test races two
+reassignments that both carry the same (soon-to-be-stale)
+`expectedCurrentAssignmentId`; exactly one wins, the loser is rejected, and
+row counts confirm no residue from the loser
+(`apps/api/test/assignment.integration-spec.ts`, "rejects a concurrent
+stale reassignment..."). The Admin Web reassignment form surfaces this
+conflict distinctly (`AssignmentConflictError.code === "STALE_ASSIGNMENT"`)
+and reloads current server state rather than silently retrying with
+stale data.
+
+### Mass-assignment / input validation — explicit DTO allowlists, `forbidNonWhitelisted` global pipe, normalized text
+
+`AssignTaskDto`/`ReassignTaskDto` enumerate every accepted field
+explicitly (`primaryAssigneeUserId`, `supportingEmployeeUserIds`,
+optional `note` or mandatory `reason`, `expectedCurrentAssignmentId`); the
+existing global `ValidationPipe({ whitelist: true, forbidNonWhitelisted:
+true })` rejects any unknown property — `taskId`, `assignmentType`,
+`previousAssignmentId`, and actor identity can never be set by the client
+(actor is always `principal.userId` from the authenticated session, never
+a request field). Supporting-employee lists are capped at 20 entries
+(`packages/domain` `validateAssignmentPersonnel`) as a technical
+DoS/abuse safeguard, not a business-rule invention. Notes and reassignment
+reasons are trimmed server-side before persistence; a blank or
+whitespace-only reassignment reason is rejected with `400`.
+
+### Audit/history mutation and unsafe cascades — reviewed, no finding
+
+`TaskAssignment`/`TaskAssignmentSupport` rows are only ever created, never
+updated or deleted by any endpoint — no assignment or assignment-history
+`DELETE` route exists. Every FK in the MVP-04 schema
+(`task_assignments`, `task_assignment_supports`, `task_current_assignments`)
+uses `ON DELETE RESTRICT` (matching the append-only-history convention
+established in MVP-02/MVP-03), including the self-referential
+`previousAssignmentId` FK on `task_assignments`, so no cascade can ever
+silently erase assignment/reassignment history. A `CHECK` constraint
+(`task_assignments_type_consistency_check`) enforces at the database level
+that an `INITIAL` row has no `previousAssignmentId`/`reason` and a
+`REASSIGNMENT` row has both, non-blank.
+
+### Database integration/e2e/Playwright tests — verified clean residue
+
+`apps/api/test/assignment.integration-spec.ts`,
+`apps/api/test/assignment.e2e-spec.ts`, and
+`e2e/tests/assignment.spec.ts` each create only their own uniquely-marked
+test Users/Customers/Searches/Tasks/Assignments and delete exactly those
+rows afterward (assignment rows deleted individually, newest first, to
+respect the self-referential `previousAssignmentId` RESTRICT FK). Verified
+via direct `psql` counts after a full local run of every verification
+script including `./scripts/db-verify.sh` and `./scripts/e2e-local.sh`:
+`delivery_tasks`=0, `task_assignments`=0, `task_assignment_supports`=0,
+`task_current_assignments`=0, `customers`=0, `customer_master_searches`=0,
+`users`/`auth_sessions`/`refresh_token_records` returned to their
+pre-suite baseline (the real operator's own rows) — no residue, no impact
+on the operator account or the six seeded roles.
+
+### Known scanner warning — literal `DATABASE_URL` references reviewed
+
+`./scripts/security-review.sh` reports a WARN for literal `DATABASE_URL`
+strings in new test-file doc comments (e.g. "Requires a reachable
+PostgreSQL via DATABASE_URL..."). Manual review confirmed these are the
+variable name in prose, not a connection-string value. No secret value
+was committed.
+
+**No entries in `.security-accepted-risks` were required for MVP-04** — no
+HIGH/CRITICAL finding, accepted or otherwise.
+
+---
+
 <!-- Future accepted-risk entries go below this line, in the format described
      in docs/SECURITY_PATCH_POLICY.md -->

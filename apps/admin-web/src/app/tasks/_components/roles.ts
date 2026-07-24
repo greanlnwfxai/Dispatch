@@ -22,3 +22,10 @@ export function canCreatePreparationCorrection(roleCodes: DispatchRoleCode[]): b
 export function canReviewPreparationCorrection(roleCodes: DispatchRoleCode[]): boolean {
   return roleCodes.some((code) => CORRECTION_REVIEW_ROLES.includes(code));
 }
+
+/** Mirrors the server-side RBAC matrix (AssignmentController) — client-side only for UI visibility, never authoritative. */
+export const ASSIGNMENT_WRITE_ROLES: DispatchRoleCode[] = ["SUPER_ADMIN", "ADMIN", "DISPATCHER"];
+
+export function canAssignTasks(roleCodes: DispatchRoleCode[]): boolean {
+  return roleCodes.some((code) => ASSIGNMENT_WRITE_ROLES.includes(code));
+}

@@ -29,8 +29,12 @@ const READ_ROLES = ["SUPER_ADMIN", "ADMIN", "DISPATCHER", "STOCK", "MANAGEMENT_A
  * exists — see CLAUDE.md §7 "Do not implement DELETE /tasks". RBAC per
  * Dispatch Knowledge Topic 03 §22: creation/edit/submit is restricted to
  * SUPER_ADMIN/ADMIN/DISPATCHER; read access additionally includes
- * STOCK/MANAGEMENT_AUDITOR. INTERNAL_DELIVERY_EMPLOYEE has no access in
- * this milestone (assignment/record-scope is not implemented yet).
+ * STOCK/MANAGEMENT_AUDITOR. INTERNAL_DELIVERY_EMPLOYEE has no access to
+ * these general Task routes — its own record-scoped read access to a
+ * currently-assigned Task is served separately by
+ * `GET /assigned-tasks`/`GET /assigned-tasks/:id` (see
+ * apps/api/src/assignment) so record scope never depends on this
+ * controller's broader read-role list.
  */
 @Controller("tasks")
 export class TasksController {

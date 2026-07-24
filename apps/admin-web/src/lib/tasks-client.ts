@@ -9,16 +9,24 @@ import {
   buildPreparationIssuesPath,
   buildPreparationPath,
   buildPreparationStartPath,
+  buildTaskAssignmentHistoryPath,
+  buildTaskAssignmentPath,
   PREPARATION_CORRECTIONS_PATH,
+  ASSIGNMENT_CANDIDATES_PATH,
   CUSTOMER_MASTER_SEARCH_PATH,
   DELIVERY_TASKS_PATH,
+  type AssignmentHistoryResponseBody,
+  type AssignTaskRequestBody,
   type CreatePreparationCorrectionRequestBody,
   type CreateDeliveryTaskRequestBody,
+  type CurrentAssignmentResponseBody,
   type CustomerMasterSearchResponseBody,
   type DeliveryTaskDetailDto,
+  type ListAssignmentCandidatesResponseBody,
   type ListDeliveryTasksResponseBody,
   type ListPreparationCorrectionsResponseBody,
   type PreparationDetailDto,
+  type ReassignTaskRequestBody,
   type UpdatePreparationRequestBody,
   type UpdateDeliveryTaskDraftRequestBody,
 } from "@dispatch/contracts";
@@ -45,6 +53,41 @@ export class TasksApiError extends Error {
 async function parseJsonOrThrow<T>(response: Response, genericMessage: string): Promise<T> {
   if (!response.ok) {
     throw new TasksApiError(genericMessage, response.status);
+  }
+  return (await response.json()) as T;
+}
+
+/**
+ * Carries the API's structured conflict `code` (e.g. `STALE_ASSIGNMENT`)
+ * alongside the generic HTTP status, so the reassignment UI can show a
+ * specific "refresh and try again" message instead of a generic error.
+ */
+export class AssignmentConflictError extends TasksApiError {
+  constructor(
+    message: string,
+    status: number,
+    public readonly code?: string,
+  ) {
+    super(message, status);
+  }
+}
+
+async function parseAssignmentResponse<T>(response: Response, genericMessage: string): Promise<T> {
+  if (!response.ok) {
+    let code: string | undefined;
+    try {
+      const body: unknown = await response.json();
+      if (body && typeof body === "object" && "code" in body && typeof (body as { code: unknown }).code === "string") {
+        code = (body as { code: string }).code;
+      }
+    } catch {
+      // Response body was not JSON — fall through with no code, generic message.
+    }
+    throw new AssignmentConflictError(
+      code === "STALE_ASSIGNMENT" ? "การมอบหมายมีการเปลี่ยนแปลงหลังจากที่โหลดข้อมูลล่าสุด กรุณารีเฟรชแล้วลองใหม่อีกครั้ง" : genericMessage,
+      response.status,
+      code,
+    );
   }
   return (await response.json()) as T;
 }
@@ -209,4 +252,58 @@ export async function listDeliveryTasks(
 
   const response = await authFetch(`${DELIVERY_TASKS_PATH}?${query.toString()}`);
   return parseJsonOrThrow(response, "โหลดรายการงานไม่สำเร็จ");
+}
+
+export interface ListAssignmentCandidatesParams {
+  search?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export async function listAssignmentCandidates(
+  authFetch: AuthFetch,
+  params: ListAssignmentCandidatesParams = {},
+): Promise<ListAssignmentCandidatesResponseBody> {
+  const query = new URLSearchParams();
+  if (params.search) query.set("search", params.search);
+  query.set("page", String(params.page ?? 1));
+  query.set("pageSize", String(params.pageSize ?? 20));
+  const response = await authFetch(`${ASSIGNMENT_CANDIDATES_PATH}?${query.toString()}`);
+  return parseJsonOrThrow(response, "โหลดรายชื่อพนักงานจัดส่งไม่สำเร็จ");
+}
+
+export async function getCurrentAssignment(authFetch: AuthFetch, taskId: string): Promise<CurrentAssignmentResponseBody> {
+  const response = await authFetch(buildTaskAssignmentPath(taskId));
+  return parseJsonOrThrow(response, "โหลดข้อมูลการมอบหมายไม่สำเร็จ");
+}
+
+export async function getAssignmentHistory(authFetch: AuthFetch, taskId: string): Promise<AssignmentHistoryResponseBody> {
+  const response = await authFetch(buildTaskAssignmentHistoryPath(taskId));
+  return parseJsonOrThrow(response, "โหลดประวัติการมอบหมายไม่สำเร็จ");
+}
+
+export async function assignTask(
+  authFetch: AuthFetch,
+  taskId: string,
+  body: AssignTaskRequestBody,
+): Promise<CurrentAssignmentResponseBody> {
+  const response = await authFetch(buildTaskAssignmentPath(taskId), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return parseAssignmentResponse(response, "มอบหมายงานไม่สำเร็จ");
+}
+
+export async function reassignTask(
+  authFetch: AuthFetch,
+  taskId: string,
+  body: ReassignTaskRequestBody,
+): Promise<CurrentAssignmentResponseBody> {
+  const response = await authFetch(buildTaskAssignmentPath(taskId), {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return parseAssignmentResponse(response, "มอบหมายใหม่ไม่สำเร็จ");
 }

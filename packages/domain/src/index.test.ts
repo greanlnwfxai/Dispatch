@@ -3,12 +3,20 @@ import {
   createBrandedId,
   findDuplicateTaskReferences,
   formatDeliveryTaskNumber,
+  validateAssignmentNote,
+  validateAssignmentPersonnel,
+  validateExpectedCurrentAssignmentId,
+  validateInitialAssignmentInput,
+  validateInitialAssignmentStatus,
   validatePostTransitDiscrepancyStatus,
   validatePreparationCorrectionInput,
   validatePreparationCorrectionReviewInput,
   validatePreparationReady,
   validatePreparationStart,
   validatePreparationUpdate,
+  validateReassignmentInput,
+  validateReassignmentReason,
+  validateReassignmentStatus,
   validateDeliveryTaskSubmission,
   validateDestinationSelection,
   validateGoodsLineInput,
@@ -124,6 +132,90 @@ describe("MVP-03 preparation validation", () => {
       "PREPARATION_CORRECTION_REVIEW_STATUS_INVALID",
       "PREPARATION_CORRECTION_REVIEW_NOTE_INVALID",
     ]);
+  });
+});
+
+describe("MVP-04 assignment validation", () => {
+  it("allows initial assignment only from READY_FOR_DISPATCH", () => {
+    expect(validateInitialAssignmentStatus("READY_FOR_DISPATCH")).toEqual([]);
+    expect(validateInitialAssignmentStatus("WAITING_PREPARATION").map((error) => error.code)).toContain(
+      "TASK_NOT_READY_FOR_DISPATCH",
+    );
+    expect(validateInitialAssignmentStatus("ASSIGNED").map((error) => error.code)).toContain("TASK_NOT_READY_FOR_DISPATCH");
+  });
+
+  it("allows reassignment only while ASSIGNED", () => {
+    expect(validateReassignmentStatus("ASSIGNED")).toEqual([]);
+    expect(validateReassignmentStatus("READY_FOR_DISPATCH").map((error) => error.code)).toContain("TASK_NOT_ASSIGNED");
+  });
+
+  it("requires a primary assignee, rejects duplicate support users, and rejects primary/support overlap", () => {
+    expect(validateAssignmentPersonnel({ primaryAssigneeUserId: "user-1", supportingEmployeeUserIds: [] })).toEqual([]);
+    expect(
+      validateAssignmentPersonnel({ primaryAssigneeUserId: "", supportingEmployeeUserIds: [] }).map((error) => error.code),
+    ).toContain("PRIMARY_ASSIGNEE_REQUIRED");
+    expect(
+      validateAssignmentPersonnel({
+        primaryAssigneeUserId: "user-1",
+        supportingEmployeeUserIds: ["user-2", "user-2"],
+      }).map((error) => error.code),
+    ).toContain("DUPLICATE_SUPPORTING_EMPLOYEE");
+    expect(
+      validateAssignmentPersonnel({
+        primaryAssigneeUserId: "user-1",
+        supportingEmployeeUserIds: ["user-1"],
+      }).map((error) => error.code),
+    ).toContain("PRIMARY_IN_SUPPORT_LIST");
+    expect(
+      validateAssignmentPersonnel({
+        primaryAssigneeUserId: "user-1",
+        supportingEmployeeUserIds: Array.from({ length: 21 }, (_, index) => `user-${index + 2}`),
+      }).map((error) => error.code),
+    ).toContain("TOO_MANY_SUPPORTING_EMPLOYEES");
+  });
+
+  it("treats a missing initial-assignment note as valid and rejects an overlong one", () => {
+    expect(validateAssignmentNote(undefined)).toEqual([]);
+    expect(validateAssignmentNote(null)).toEqual([]);
+    expect(validateAssignmentNote("short note")).toEqual([]);
+    expect(validateAssignmentNote("x".repeat(1001)).map((error) => error.code)).toContain("ASSIGNMENT_NOTE_TOO_LONG");
+  });
+
+  it("rejects a blank or whitespace-only reassignment reason (BDR-ASSIGN-005)", () => {
+    expect(validateReassignmentReason("Driver reported unavailable.")).toEqual([]);
+    expect(validateReassignmentReason("").map((error) => error.code)).toContain("REASSIGNMENT_REASON_INVALID");
+    expect(validateReassignmentReason("   ").map((error) => error.code)).toContain("REASSIGNMENT_REASON_INVALID");
+    expect(validateReassignmentReason("x".repeat(1001)).map((error) => error.code)).toContain("REASSIGNMENT_REASON_INVALID");
+  });
+
+  it("requires the expected-current-assignment stale-write precondition", () => {
+    expect(validateExpectedCurrentAssignmentId("assignment-1")).toEqual([]);
+    expect(validateExpectedCurrentAssignmentId("").map((error) => error.code)).toContain(
+      "EXPECTED_CURRENT_ASSIGNMENT_ID_REQUIRED",
+    );
+  });
+
+  it("composes full initial-assignment and reassignment input validation", () => {
+    expect(
+      validateInitialAssignmentInput({ primaryAssigneeUserId: "user-1", supportingEmployeeUserIds: ["user-2"], note: "Ready to go." }),
+    ).toEqual([]);
+    expect(
+      validateReassignmentInput({
+        primaryAssigneeUserId: "user-3",
+        supportingEmployeeUserIds: [],
+        reason: "Original driver called in sick.",
+        expectedCurrentAssignmentId: "assignment-1",
+      }),
+    ).toEqual([]);
+    const errors = validateReassignmentInput({
+      primaryAssigneeUserId: "",
+      supportingEmployeeUserIds: [],
+      reason: "  ",
+      expectedCurrentAssignmentId: "",
+    }).map((error) => error.code);
+    expect(errors).toContain("PRIMARY_ASSIGNEE_REQUIRED");
+    expect(errors).toContain("REASSIGNMENT_REASON_INVALID");
+    expect(errors).toContain("EXPECTED_CURRENT_ASSIGNMENT_ID_REQUIRED");
   });
 });
 

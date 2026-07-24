@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  ACTIVE_ASSIGNMENT_WORKLOAD_STATUSES,
+  ASSIGNMENT_TYPE_CODES,
   DELIVERY_TASK_STATUS_CODES,
   DESTINATION_SOURCE_CODES,
   DISPATCH_ROLE_CODES,
@@ -9,6 +11,8 @@ import {
   PREPARATION_CORRECTION_REVIEW_STATUS_CODES,
   PREPARATION_EVIDENCE_CATEGORY_CODES,
   PREPARATION_ISSUE_STATUS_CODES,
+  isActiveAssignmentWorkloadStatus,
+  isAssignmentType,
   isDeliveryTaskStatus,
   isDestinationSource,
   isDispatchRoleCode,
@@ -133,5 +137,29 @@ describe("MVP-03 preparation enums", () => {
     expect(isPreparationCorrectionMateriality("MATERIAL")).toBe(true);
     expect(isPreparationCorrectionReviewStatus("REVIEWED")).toBe(true);
     expect(isPreparationCorrectionReviewStatus("APPROVED")).toBe(false);
+  });
+});
+
+describe("MVP-04 assignment enums", () => {
+  it("exposes exactly INITIAL and REASSIGNMENT assignment types", () => {
+    expect([...ASSIGNMENT_TYPE_CODES]).toEqual(["INITIAL", "REASSIGNMENT"]);
+    expect(isAssignmentType("INITIAL")).toBe(true);
+    expect(isAssignmentType("REASSIGNMENT")).toBe(true);
+    expect(isAssignmentType("HIDDEN_SUBSTITUTION")).toBe(false);
+  });
+
+  it("centralizes active assignment workload statuses as a subset of the Main Task Status model", () => {
+    expect([...ACTIVE_ASSIGNMENT_WORKLOAD_STATUSES]).toEqual([
+      "ASSIGNED",
+      "IN_TRANSIT",
+      "AT_DESTINATION",
+      "WAITING_NEXT_ATTEMPT",
+    ]);
+    for (const status of ACTIVE_ASSIGNMENT_WORKLOAD_STATUSES) {
+      expect((DELIVERY_TASK_STATUS_CODES as readonly string[])).toContain(status);
+      expect(isActiveAssignmentWorkloadStatus(status)).toBe(true);
+    }
+    expect(isActiveAssignmentWorkloadStatus("DRAFT")).toBe(false);
+    expect(isActiveAssignmentWorkloadStatus("COMPLETED")).toBe(false);
   });
 });

@@ -54,7 +54,7 @@ test.describe("MVP-03 — Task preparation flow", () => {
     });
   });
 
-  test("creates a Task, prepares goods with photo evidence, and confirms READY_FOR_DISPATCH without Assignment scope", async ({
+  test("creates a Task, prepares goods with photo evidence, and confirms READY_FOR_DISPATCH", async ({
     page,
   }) => {
     await page.goto(`${ADMIN_WEB_URL}/login`);
@@ -108,9 +108,9 @@ test.describe("MVP-03 — Task preparation flow", () => {
     await page.getByRole("button", { name: "ยืนยันพร้อมจัดส่ง" }).click();
     await expect(page.getByText("สถานะ: READY_FOR_DISPATCH")).toBeVisible();
 
-    // Assignment/Delivery scope remains excluded in MVP-03.
-    await expect(page.getByRole("button", { name: /มอบหมาย/ })).toHaveCount(0);
-    await expect(page.getByRole("link", { name: /มอบหมาย/ })).toHaveCount(0);
+    // MVP-04 assignment UI now appears at READY_FOR_DISPATCH (covered end-to-end
+    // in e2e/tests/assignment.spec.ts) — Delivery Start/Attempt scope remains excluded.
+    await expect(page.getByRole("button", { name: /เริ่มจัดส่ง|start delivery/i })).toHaveCount(0);
     // No delete action ever exists.
     await expect(page.getByRole("button", { name: /ลบงาน|delete task/i })).toHaveCount(0);
   });

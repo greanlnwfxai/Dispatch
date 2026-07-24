@@ -1,15 +1,17 @@
 "use client";
 
 import { useEffect } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "./auth-context";
 
 /**
- * Authenticated placeholder (AUTH-001) — no delivery workflow, GPS
- * check-in, or evidence capture yet. Unauthenticated visitors are
- * redirected to /login. An "offline" bootstrap failure (network error, not
- * a rejected session) shows a distinct retry-safe message rather than
- * silently redirecting to login.
+ * Authenticated home (AUTH-001 shell + MVP-04 entry point). Internal
+ * Delivery Employees get a link to their read-only "My Assigned Tasks"
+ * view; no delivery workflow, GPS check-in, or evidence capture exists yet.
+ * Unauthenticated visitors are redirected to /login. An "offline" bootstrap
+ * failure (network error, not a rejected session) shows a distinct
+ * retry-safe message rather than silently redirecting to login.
  */
 export default function HomePage() {
   const { status, principal, logout } = useAuth();
@@ -63,12 +65,21 @@ export default function HomePage() {
           <div>
             <dt className="text-sm font-medium text-slate-500">Foundation status</dt>
             <dd className="mt-1 text-base">
-              AUTH-001 — authentication foundation. No delivery workflow, GPS check-in, or evidence capture is
+              MVP-04 — assignment record scope. No delivery workflow, GPS check-in, or evidence capture is
               implemented yet.
             </dd>
           </div>
         </dl>
       </div>
+
+      {principal.roleCodes.includes("INTERNAL_DELIVERY_EMPLOYEE") && (
+        <Link
+          href="/assigned-tasks"
+          className="rounded-lg border border-slate-200 bg-white p-4 text-sm font-medium shadow-sm"
+        >
+          My Assigned Tasks →
+        </Link>
+      )}
 
       <button
         type="button"

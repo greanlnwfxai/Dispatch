@@ -5,21 +5,28 @@ covering task creation, stock preparation, assignment, internal delivery
 (GPS check-in, evidence, recipient capture), external courier recording,
 returned goods, reopen, emergency override, and audit/reporting.
 
-**Current milestone: MVP-03 — Preparation and Pre-loading Evidence.** Prior
-milestone AUTH-001 (Authentication and RBAC Foundation) is complete:
-login/refresh/logout with short-lived JWT access tokens, rotating opaque
-refresh tokens, server-side session/revocation storage, and RBAC guards.
-MVP-02 added the first Dispatch business capability: read-only Customer/
-Destination Master search (search-first, BDR-CUSTOMER-001/002), and
-Delivery Task creation/editing/submission (DRAFT → WAITING_PREPARATION)
-with an immutable Historical Destination Snapshot. MVP-03 adds Stock/Admin
-preparation through `READY_FOR_DISPATCH`, private pre-loading photo
-evidence, preparation issues, and the correction-governance foundation.
-**No Assignment, DeliveryAttempt, Delivery, Return, Reopen, Override, or
-Reporting workflow is implemented yet.** Business knowledge and rules live in
-`Dispatch Knowledge/` (Topics 01–11) and remain the source of truth;
-`CLAUDE.md` governs engineering workflow and safety. See
-`docs/CTO_SUMMARY_MVP_03.md` for the full report.
+**Current milestone: MVP-04 — Delivery Task Assignment.** Prior milestone
+AUTH-001 (Authentication and RBAC Foundation) is complete: login/refresh/
+logout with short-lived JWT access tokens, rotating opaque refresh tokens,
+server-side session/revocation storage, and RBAC guards. MVP-02 added the
+first Dispatch business capability: read-only Customer/Destination Master
+search (search-first, BDR-CUSTOMER-001/002), and Delivery Task creation/
+editing/submission (DRAFT → WAITING_PREPARATION) with an immutable
+Historical Destination Snapshot. MVP-03 added Stock/Admin preparation
+through `READY_FOR_DISPATCH`, private pre-loading photo evidence,
+preparation issues, and the correction-governance foundation. MVP-04 adds
+formal Assignment (`READY_FOR_DISPATCH` → `ASSIGNED`): exactly one primary
+internal delivery employee plus optional informational-only supporting
+employees, formal reassignment with a mandatory reason and stale-write
+protection, non-blocking active-workload visibility on candidate search, and
+the Internal Delivery Employee's own record-scoped "My assigned tasks"
+read-only view (BDR-ASSIGN-001 through BDR-ASSIGN-005).
+**No start-delivery, DeliveryAttempt, GPS check-in, handover evidence,
+recipient/signature, Return, Reopen, Override, or Reporting workflow is
+implemented yet.** Business knowledge and rules live in `Dispatch
+Knowledge/` (Topics 01–11) and remain the source of truth; `CLAUDE.md`
+governs engineering workflow and safety. See `docs/CTO_SUMMARY_MVP_04.md`
+for the full report.
 
 ## Architecture overview
 
@@ -157,8 +164,9 @@ never drops, resets, or truncates anything.
   that a later Customer Master edit never overwrites.
 - RBAC: SUPER_ADMIN/ADMIN/DISPATCHER may search/create/edit/submit;
   SUPER_ADMIN/ADMIN/DISPATCHER/STOCK/MANAGEMENT_AUDITOR may read.
-- No Assignment, DeliveryAttempt, Delivery, Return, Reopen, Override, or
-  Reporting workflow exists yet — see `docs/CTO_SUMMARY_MVP_03.md`.
+- No start-delivery, DeliveryAttempt, GPS check-in, handover evidence,
+  recipient/signature, Return, Reopen, Override, or Reporting workflow
+  exists yet — see `docs/CTO_SUMMARY_MVP_04.md`.
 
 ## Preparation and pre-loading evidence (MVP-03)
 
@@ -189,8 +197,50 @@ RBAC:
 - Preparation write/evidence/ready: STOCK, ADMIN, SUPER_ADMIN.
 - Correction create: ADMIN.
 - Correction review: SUPER_ADMIN.
-- INTERNAL_DELIVERY_EMPLOYEE remains denied in MVP-03 because Assignment and
-  record-scope access are not implemented.
+- INTERNAL_DELIVERY_EMPLOYEE has no access to `/tasks`/`/preparation`
+  routes; its own record-scoped read access is served by
+  `/assigned-tasks` (MVP-04, below).
+
+## Delivery Task Assignment (MVP-04)
+
+- `POST /tasks/:id/assignment` performs the initial assignment
+  (`READY_FOR_DISPATCH -> ASSIGNED`): exactly one primary internal delivery
+  employee, zero or more unique supporting employees (informational only —
+  no task record scope, no evidence upload, no delivery action, never a
+  proxy/shared/temporary authority — BDR-ASSIGN-002), and an optional note.
+- `PATCH /tasks/:id/assignment` performs a formal reassignment while
+  `ASSIGNED` (status unchanged): requires a non-blank reason and the
+  expected current-assignment id as a stale-write precondition — a mismatch
+  under the task row lock returns a deterministic `409` with
+  `code: "STALE_ASSIGNMENT"`, never a silent overwrite.
+- `GET /tasks/:id/assignment` / `GET /tasks/:id/assignment/history` return
+  the current assignment and the full append-only assignment/reassignment
+  history. No assignment or history `DELETE` endpoint exists
+  (BDR-ASSIGN-003/005 — immutable history).
+- `GET /assignment-candidates` returns active `INTERNAL_DELIVERY_EMPLOYEE`
+  users with a current active-task count (BDR-ASSIGN-004 — existing
+  workload never hard-blocks assignment; the UI shows a non-blocking
+  warning instead). Only the minimum fields the assignment UI needs are
+  returned — no credentials, tokens, or sessions.
+- `GET /assigned-tasks` / `GET /assigned-tasks/:id` are the Internal
+  Delivery Employee's own record-scoped read-only view: only tasks where
+  the caller is the *current primary assignee* — a supporting-only or
+  unrelated employee gets `404`, never task data, whether reached through
+  the UI or a direct URL/API call (BR-SECURITY-004).
+- Database: `TaskAssignment` (append-only event log), `TaskAssignmentSupport`
+  (append-only per-assignment supporting employees), and
+  `TaskCurrentAssignment` (the only mutable row — a one-row-per-task
+  pointer whose primary key on `taskId` is the database-level backstop for
+  "at most one current assignment per task", independent of the
+  `SELECT ... FOR UPDATE` row lock every assignment/reassignment
+  transaction takes on `delivery_tasks` first).
+
+RBAC:
+
+- Assign/reassign/search candidates: SUPER_ADMIN, ADMIN, DISPATCHER.
+- Read current assignment/history: SUPER_ADMIN, ADMIN, DISPATCHER, STOCK,
+  MANAGEMENT_AUDITOR.
+- `/assigned-tasks` (own record scope only): INTERNAL_DELIVERY_EMPLOYEE.
 
 ## Verification commands
 
@@ -218,7 +268,7 @@ afterward.
 ```
 Dispatch/
 ├── apps/
-│   ├── admin-web/      # Next.js — Admin Web (login/session shell + MVP-03 Task/preparation screens)
+│   ├── admin-web/      # Next.js — Admin Web (login/session shell + Task/preparation/assignment screens)
 │   ├── api/             # NestJS — Backend API
 │   │   ├── prisma/       # schema.prisma, migrations/, seed.ts
 │   │   └── src/
@@ -227,15 +277,16 @@ Dispatch/
 │   │       ├── customer-master/            # MVP-02 — read-only Customer Master search
 │   │       ├── tasks/                      # MVP-02 — Delivery Task create/edit/submit
 │   │       ├── preparation/                # MVP-03 — preparation, evidence, correction governance
+│   │       ├── assignment/                 # MVP-04 — assignment, reassignment, candidates, assigned-tasks
 │   │       └── infrastructure/database/     # PrismaModule/Service, repository adapters
-│   └── mobile-pwa/      # Next.js PWA — Internal Delivery Mobile/PWA (login/session shell only; no MVP-02 UI)
+│   └── mobile-pwa/      # Next.js PWA — Internal Delivery Mobile/PWA (login/session shell + MVP-04 "My assigned tasks" read-only view)
 ├── packages/
-│   ├── contracts/        # Shared health/readiness + auth + Task/preparation API contracts
+│   ├── contracts/        # Shared health/readiness + auth + Task/preparation/assignment API contracts
 │   ├── domain/            # Framework-independent record types, repository interfaces, business validation
 │   ├── shared-types/      # Service identifiers, health/readiness shape, role/status/enum codes
 │   ├── validation/        # Generic assertion helpers
 │   └── test-utils/        # Shared test assertions
-├── e2e/                   # Playwright suite — foundation reachability + MVP-02 Task creation flow
+├── e2e/                   # Playwright suite — foundation reachability + MVP-02/MVP-04 flows
 ├── scripts/               # Verification/security harness scripts (incl. db-verify.sh)
 ├── docs/                  # Technical docs, CTO summaries, security policy
 ├── infra/                 # Reserved for future infra-as-code

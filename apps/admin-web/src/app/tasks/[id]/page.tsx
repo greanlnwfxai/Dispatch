@@ -19,8 +19,13 @@ import {
   uploadPreparationEvidence,
 } from "../../../lib/tasks-client";
 import { canCreateEditSubmitTasks, canCreatePreparationCorrection, canWritePreparation } from "../_components/roles";
+import { AssignmentSection } from "./_components/assignment-section";
 
-/** Task detail with MVP-03 preparation workflow. No Assignment, Attempt, Reopen, Override, or DELETE action exists. */
+/**
+ * Task detail with MVP-03 preparation workflow and MVP-04 assignment
+ * (READY_FOR_DISPATCH -> ASSIGNED, formal reassignment while ASSIGNED). No
+ * start-delivery, Attempt, Reopen, Override, or DELETE action exists.
+ */
 export default function TaskDetailPage() {
   const { status, principal, authFetch } = useAuth();
   const router = useRouter();
@@ -456,6 +461,13 @@ export default function TaskDetailPage() {
           </div>
         )}
       </section>
+
+      {(task.status === "READY_FOR_DISPATCH" || task.status === "ASSIGNED") && (
+        <section className="border-t border-slate-200 pt-5">
+          <h2 className="mb-3 text-sm font-medium uppercase text-slate-500">การมอบหมายงาน</h2>
+          <AssignmentSection taskId={task.id} taskStatus={task.status} onAssigned={() => void reload()} />
+        </section>
+      )}
 
       <section className="border-t border-slate-200 pt-5">
         <h2 className="mb-2 text-sm font-medium uppercase text-slate-500">ประวัติสถานะ</h2>

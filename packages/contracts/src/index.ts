@@ -89,6 +89,7 @@ export function buildAuthUrl(apiBaseUrl: string, path: string): string {
  * decimal type) so the client, server, and tests all agree on precision.
  */
 import type {
+  AssignmentType,
   DeliveryTaskStatus,
   DestinationSource,
   FreeTextFallbackReason,
@@ -149,6 +150,28 @@ export const PREPARATION_CORRECTIONS_PATH = "/preparation-corrections" as const;
 
 export function buildPreparationCorrectionReviewPath(correctionId: string): string {
   return `${PREPARATION_CORRECTIONS_PATH}/${correctionId}/review`;
+}
+
+/**
+ * MVP-04 — Delivery Task Assignment path builders. `/assignment-candidates`
+ * and `/assigned-tasks` are top-level resources (not nested under
+ * `/tasks/:id`) because candidate search is task-independent and the
+ * assigned-task list/detail views are scoped to the caller, not to one
+ * Task.
+ */
+export const ASSIGNMENT_CANDIDATES_PATH = "/assignment-candidates" as const;
+export const ASSIGNED_TASKS_PATH = "/assigned-tasks" as const;
+
+export function buildTaskAssignmentPath(taskId: string): string {
+  return `${DELIVERY_TASKS_PATH}/${taskId}/assignment`;
+}
+
+export function buildTaskAssignmentHistoryPath(taskId: string): string {
+  return `${buildTaskAssignmentPath(taskId)}/history`;
+}
+
+export function buildAssignedTaskDetailPath(taskId: string): string {
+  return `${ASSIGNED_TASKS_PATH}/${taskId}`;
 }
 
 export interface CustomerMasterSearchRequestBody {
@@ -407,7 +430,108 @@ export interface ReviewPreparationCorrectionRequestBody {
   reviewNote: string;
 }
 
+/**
+ * MVP-04 — Delivery Task Assignment contracts (BDR-ASSIGN-001 through
+ * BDR-ASSIGN-005). `AssignmentPersonDto` carries a live `displayName` join
+ * rather than an immutable snapshot: no User-profile-edit endpoint exists
+ * anywhere in this milestone, so a snapshot would duplicate data without
+ * protecting against any real mutation risk.
+ */
+export interface AssignmentPersonDto {
+  userId: string;
+  displayName: string;
+}
+
+export interface AssignmentCandidateDto {
+  userId: string;
+  displayName: string;
+  activeTaskCount: number;
+}
+
+export interface ListAssignmentCandidatesResponseBody {
+  items: AssignmentCandidateDto[];
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
+export interface AssignmentRecordDto {
+  id: string;
+  taskId: string;
+  assignmentType: AssignmentType;
+  primaryAssignee: AssignmentPersonDto;
+  supportingEmployees: AssignmentPersonDto[];
+  actor: AssignmentPersonDto;
+  note: string | null;
+  reason: string | null;
+  previousAssignmentId: string | null;
+  createdAt: string;
+}
+
+export interface CurrentAssignmentResponseBody {
+  assignment: AssignmentRecordDto | null;
+}
+
+export interface AssignmentHistoryResponseBody {
+  items: AssignmentRecordDto[];
+}
+
+/** Initial assignment (READY_FOR_DISPATCH -> ASSIGNED). Must not carry a reassignment reason. */
+export interface AssignTaskRequestBody {
+  primaryAssigneeUserId: string;
+  supportingEmployeeUserIds: string[];
+  note?: string | null;
+}
+
+/**
+ * Formal reassignment (ASSIGNED -> ASSIGNED). `expectedCurrentAssignmentId`
+ * is the stale-write precondition — the caller must echo the
+ * `AssignmentRecordDto.id` it last observed as current; a mismatch under
+ * the server-side task lock is rejected with 409.
+ */
+export interface ReassignTaskRequestBody {
+  primaryAssigneeUserId: string;
+  supportingEmployeeUserIds: string[];
+  reason: string;
+  expectedCurrentAssignmentId: string;
+}
+
+export interface AssignedTaskSummaryDto {
+  id: string;
+  taskNumber: string;
+  status: DeliveryTaskStatus;
+  destinationName: string;
+  plannedDeliveryDate: string | null;
+  assignedAt: string;
+}
+
+/**
+ * Self-contained detail for the primary assignee's own read-only view
+ * (Mobile/PWA). Deliberately excludes preparation evidence, correction
+ * records, and discrepancy reports — out of MVP-04 record-scope and not
+ * needed by a read-only assignment view.
+ */
+export interface AssignedTaskDetailDto extends AssignedTaskSummaryDto {
+  address: string;
+  contactName: string | null;
+  contactPhone: string | null;
+  deliveryInstructions: string | null;
+  locationReference: string | null;
+  accessNotes: string | null;
+  preparationReady: boolean;
+  supportingEmployees: AssignmentPersonDto[];
+}
+
+export interface ListAssignedTasksResponseBody {
+  items: AssignedTaskSummaryDto[];
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
 export type {
+  ActiveAssignmentWorkloadStatus,
+  AssignmentType,
   DeliveryTaskStatus,
   DestinationSource,
   FreeTextFallbackReason,
@@ -416,3 +540,5 @@ export type {
   PreparationEvidenceCategory,
   PreparationIssueStatus,
 } from "@dispatch/shared-types";
+
+export { ACTIVE_ASSIGNMENT_WORKLOAD_STATUSES, ASSIGNMENT_TYPE_CODES, isActiveAssignmentWorkloadStatus, isAssignmentType } from "@dispatch/shared-types";

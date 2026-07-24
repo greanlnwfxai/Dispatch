@@ -914,3 +914,120 @@ export function validatePreparationCorrectionReviewInput(input: PreparationCorre
   }
   return errors;
 }
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════
+ * MVP-04 — Delivery Task Assignment
+ * ═══════════════════════════════════════════════════════════════════════
+ *
+ * Pure rule helpers for BDR-ASSIGN-001 through BDR-ASSIGN-005: exactly one
+ * primary assignee plus zero or more unique supporting employees who never
+ * overlap the primary, initial assignment only from READY_FOR_DISPATCH,
+ * formal reassignment only from ASSIGNED with a mandatory non-blank
+ * (normalized) reason and a stale-write precondition. Active-user and
+ * INTERNAL_DELIVERY_EMPLOYEE role membership require a live PostgreSQL
+ * lookup and are intentionally NOT modeled here — this module validates
+ * only command shape and the task-status precondition, exactly like the
+ * MVP-03 preparation validators above.
+ */
+
+export interface AssignmentValidationError {
+  code: string;
+  message: string;
+}
+
+const MAX_ASSIGNMENT_TEXT_LENGTH = 1000;
+const MAX_SUPPORTING_EMPLOYEES = 20;
+
+export interface AssignmentPersonnelInput {
+  primaryAssigneeUserId: string;
+  supportingEmployeeUserIds: string[];
+}
+
+export function validateAssignmentPersonnel(input: AssignmentPersonnelInput): AssignmentValidationError[] {
+  const errors: AssignmentValidationError[] = [];
+  if (input.primaryAssigneeUserId.trim().length === 0) {
+    errors.push({ code: "PRIMARY_ASSIGNEE_REQUIRED", message: "A primary assignee is required." });
+  }
+  if (input.supportingEmployeeUserIds.length > MAX_SUPPORTING_EMPLOYEES) {
+    errors.push({
+      code: "TOO_MANY_SUPPORTING_EMPLOYEES",
+      message: `At most ${MAX_SUPPORTING_EMPLOYEES} supporting employees may be listed.`,
+    });
+  }
+  const seen = new Set<string>();
+  for (const id of input.supportingEmployeeUserIds) {
+    if (seen.has(id)) {
+      errors.push({ code: "DUPLICATE_SUPPORTING_EMPLOYEE", message: "Supporting employees must be unique." });
+      break;
+    }
+    seen.add(id);
+  }
+  if (input.primaryAssigneeUserId.trim().length > 0 && input.supportingEmployeeUserIds.includes(input.primaryAssigneeUserId)) {
+    errors.push({ code: "PRIMARY_IN_SUPPORT_LIST", message: "The primary assignee cannot also be listed as a supporting employee." });
+  }
+  return errors;
+}
+
+export function validateInitialAssignmentStatus(taskStatus: string): AssignmentValidationError[] {
+  return taskStatus === "READY_FOR_DISPATCH"
+    ? []
+    : [{ code: "TASK_NOT_READY_FOR_DISPATCH", message: "Initial assignment is allowed only from READY_FOR_DISPATCH." }];
+}
+
+export function validateReassignmentStatus(taskStatus: string): AssignmentValidationError[] {
+  return taskStatus === "ASSIGNED"
+    ? []
+    : [{ code: "TASK_NOT_ASSIGNED", message: "Reassignment is allowed only while the task is ASSIGNED." }];
+}
+
+export function validateAssignmentNote(note: string | null | undefined): AssignmentValidationError[] {
+  if (note == null) return [];
+  return note.trim().length > MAX_ASSIGNMENT_TEXT_LENGTH
+    ? [{ code: "ASSIGNMENT_NOTE_TOO_LONG", message: `Note must be ${MAX_ASSIGNMENT_TEXT_LENGTH} characters or fewer.` }]
+    : [];
+}
+
+export function validateReassignmentReason(reason: string): AssignmentValidationError[] {
+  const trimmed = reason.trim();
+  return trimmed.length === 0 || trimmed.length > MAX_ASSIGNMENT_TEXT_LENGTH
+    ? [
+        {
+          code: "REASSIGNMENT_REASON_INVALID",
+          message: `Reassignment reason must be 1-${MAX_ASSIGNMENT_TEXT_LENGTH} characters after trimming and must not be blank.`,
+        },
+      ]
+    : [];
+}
+
+export function validateExpectedCurrentAssignmentId(value: string): AssignmentValidationError[] {
+  return value.trim().length === 0
+    ? [
+        {
+          code: "EXPECTED_CURRENT_ASSIGNMENT_ID_REQUIRED",
+          message: "The expected current assignment ID precondition is required for reassignment.",
+        },
+      ]
+    : [];
+}
+
+export interface InitialAssignmentInput extends AssignmentPersonnelInput {
+  note?: string | null;
+}
+
+export function validateInitialAssignmentInput(input: InitialAssignmentInput): AssignmentValidationError[] {
+  return [...validateAssignmentPersonnel(input), ...validateAssignmentNote(input.note)];
+}
+
+export interface ReassignmentInput extends AssignmentPersonnelInput {
+  reason: string;
+  expectedCurrentAssignmentId: string;
+}
+
+export function validateReassignmentInput(input: ReassignmentInput): AssignmentValidationError[] {
+  return [
+    ...validateAssignmentPersonnel(input),
+    ...validateReassignmentReason(input.reason),
+    ...validateExpectedCurrentAssignmentId(input.expectedCurrentAssignmentId),
+  ];
+}

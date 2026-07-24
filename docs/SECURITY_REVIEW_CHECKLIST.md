@@ -6,9 +6,10 @@ CTO Summary must include a Security Review section (see `CLAUDE.md`).
 Mark each item: ✅ PASS | ❌ FAIL | N/A | ⚠️ REVIEW
 
 Items below marked with a milestone tag (e.g. "AUTH-001") reflect the
-milestone that introduced the behavior. Business-data-model and
-GPS/camera/evidence items remain N/A until the milestones that introduce
-them (MVP-02 onward).
+milestone that introduced the behavior. Business-data-model items became
+applicable starting MVP-02; GPS/camera/handover-evidence-capture items
+remain N/A until their approved milestone (MVP-05 onward — MVP-04 ends at
+`ASSIGNED`, before Delivery Start).
 
 ---
 
@@ -33,31 +34,33 @@ them (MVP-02 onward).
 - [x] Access tokens are short-lived (15 min default); refresh tokens rotate on every use; revocation is server-side (`AuthSession.revokedAt`) — reuse of a used/revoked refresh token revokes the session immediately
 - [x] No token is ever stored in browser `localStorage`/`sessionStorage`/IndexedDB on any client — refresh token lives only in an HttpOnly cookie; access token is held in memory only
 
-## Data Privacy (N/A until business data models exist)
+## Data Privacy (applicable since MVP-02)
 
-- [ ] No PII is exposed in any endpoint response
-- [ ] Pagination results are bounded to prevent full data dumps
-- [ ] Personal data is not logged in debug/error output
+- [x] No PII is exposed in any endpoint response beyond what each role's approved record scope requires — `GET /assignment-candidates` returns only `{userId, displayName, activeTaskCount}` (MVP-04); `GET /auth/me` returns only `userId`/`displayName`/`roleCodes` (AUTH-001)
+- [x] Pagination results are bounded to prevent full data dumps — every list endpoint (`/tasks`, `/assignment-candidates`, `/assigned-tasks`, `/preparation-corrections`) enforces `page`/`pageSize` with a server-side maximum
+- [x] Personal data is not logged in debug/error output — `PrismaService` logs only `error`/`warn`, never `query` (unchanged since AUTH-001)
 - [x] `GET /auth/me` returns only `userId`/`displayName`/`roleCodes` — never `loginId`, `passwordHash`, session/token internals (AUTH-001)
 
-## Mobile Security (AUTH-001 partial — GPS/camera/evidence remain N/A)
+## Mobile Security (AUTH-001 + MVP-04 read-only record scope)
 
 - [x] `NEXT_PUBLIC_*` variables contain no secrets (they are bundled into the browser bundle)
 - [ ] API base URL uses HTTPS in production builds — deferred to production deployment milestone (local dev is HTTP by design)
 - [x] No sensitive data stored in unencrypted client-side storage — verified by unit tests asserting `localStorage.length === 0`/`sessionStorage.length === 0` after authenticated bootstrap
 - [x] Refresh token uses secure, non-`localStorage` storage (HttpOnly cookie) on both Admin Web and Mobile/PWA; no service worker exists in this repository to cache auth responses
+- [x] Record scope enforced server-side, not merely UI-hidden — `GET /assigned-tasks`/`GET /assigned-tasks/:id` return only the caller's own current-primary-assignee tasks; a supporting-only or unrelated employee gets `404` (MVP-04)
+- [N/A] GPS check-in, camera/evidence capture — not implemented until MVP-05 onward (MVP-04 ends at `ASSIGNED`, before Delivery Start)
 
-## API Input Validation (N/A — no business endpoints yet)
+## API Input Validation (applicable since MVP-02)
 
-- [ ] All new DTOs use `class-validator` decorators
-- [ ] Global `ValidationPipe` has `whitelist: true, transform: true`
-- [ ] Pagination parameters validated and bounded
+- [x] All new DTOs use `class-validator` decorators — `AssignTaskDto`/`ReassignTaskDto`/`ListAssignmentCandidatesQueryDto`/`ListAssignedTasksQueryDto` (MVP-04) follow the same pattern as `CreateDeliveryTaskDto`/`UpdatePreparationDto`
+- [x] Global `ValidationPipe` has `whitelist: true, transform: true, forbidNonWhitelisted: true` (unchanged since AUTH-001) — rejects unknown properties on every endpoint, including MVP-04's
+- [x] Pagination parameters validated and bounded — `page`/`pageSize` are `@IsInt()` + `@Min`/`@Max`-bounded on every list endpoint
 
 ## Logging / Error Handling
 
 - [x] `GET /health` returns a deterministic, minimal body — no stack traces, no secrets
-- [ ] Production error responses return generic messages (no stack traces) — apply when business endpoints are added
-- [ ] Failed authentication attempts are logged (once AUTH-001 exists)
+- [x] Production error responses return generic messages (no stack traces) — verified for MVP-02/03/04 endpoints via e2e assertions that response bodies never match `stack|prisma|postgres`
+- [x] Failed authentication attempts return a generic 401 (AUTH-001, unchanged)
 
 ## Secrets / Environment
 

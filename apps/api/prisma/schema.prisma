@@ -68,6 +68,13 @@ model User {
   preparationCorrectionsCreated PreparationCorrectionRecord[] @relation("PreparationCorrectionCreatedBy")
   preparationCorrectionsReviewed PreparationCorrectionRecord[] @relation("PreparationCorrectionReviewedBy")
 
+  // ── MVP-04 back-relations. Restrict on every FK below preserves
+  // append-only assignment history even if a User row is ever deactivated.
+  taskAssignmentsAsPrimary TaskAssignment[]        @relation("TaskAssignmentPrimary")
+  taskAssignmentsAsActor   TaskAssignment[]        @relation("TaskAssignmentActor")
+  taskAssignmentSupports   TaskAssignmentSupport[]
+  currentTaskAssignments   TaskCurrentAssignment[] @relation("TaskCurrentAssignmentPrimary")
+
   @@unique([loginIdNormalized])
   @@map("users")
 }
@@ -332,6 +339,10 @@ model DeliveryTask {
   preparationRecord PreparationRecord?
   preparationDiscrepancyReports PreparationDiscrepancyReport[]
   preparationCorrections PreparationCorrectionRecord[]
+  // MVP-04 — append-only assignment history plus the one-row-per-task
+  // current-assignment pointer (see TaskCurrentAssignment doc comment).
+  assignments       TaskAssignment[]
+  currentAssignment TaskCurrentAssignment?
 
   @@index([status])
   @@index([plannedDeliveryDate])
@@ -573,4 +584,118 @@ model PreparationCorrectionRecord {
   @@index([createdByUserId])
   @@index([reviewedByUserId])
   @@map("preparation_correction_records")
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// MVP-04 — Delivery Task Assignment
+// ═══════════════════════════════════════════════════════════════════════
+//
+// Traceability: BDR-ASSIGN-001 through BDR-ASSIGN-005 (approved — see
+// docs/CTO_SUMMARY_MVP_04.md and Dispatch Knowledge Topic 07 §BDR-ASSIGN),
+// BR-ASSIGN-001 through BR-ASSIGN-009, VR-ASSIGN-001a (Topic 06 §14).
+//
+// Three tables give the smallest robust model for "one current assignment,
+// immutable history":
+//   - TaskAssignment is an append-only event log — one immutable row per
+//     initial assignment or reassignment, never updated after creation.
+//   - TaskAssignmentSupport is the append-only supporting-employee child of
+//     one TaskAssignment event, created once alongside it and never
+//     modified afterward (BDR-ASSIGN-002 — informational only).
+//   - TaskCurrentAssignment is a *mutable* one-row-per-task pointer at the
+//     current TaskAssignment. It is the only mutated row in this schema
+//     (its `currentAssignmentId` is repointed on reassignment) — history
+//     rows in TaskAssignment/TaskAssignmentSupport are never touched. Its
+//     primary key on `taskId` is the database-level backstop for "at most
+//     one current assignment per task" (§8/§15 of the MVP-04 brief),
+//     independent of and in addition to the PostgreSQL row lock every
+//     assignment/reassignment transaction takes on `delivery_tasks` first.
+//
+// Cross-entity invariants Postgres cannot express as a single-table CHECK
+// (primary assignee must not also appear as a supporting employee; primary
+// assignee / supporting employees must be active users currently holding
+// INTERNAL_DELIVERY_EMPLOYEE) are enforced in the locked application
+// transaction (AssignmentService) — a database trigger was judged
+// unnecessary complexity for this milestone's scope.
+//
+// No display-name snapshot is stored: no User-profile-edit endpoint exists
+// anywhere in the system yet, so a live join to `users.display_name` is
+// exactly as accurate as a snapshot would be, without the duplication.
+
+enum AssignmentType {
+  INITIAL
+  REASSIGNMENT
+
+  @@map("assignment_type")
+}
+
+/// Append-only assignment/reassignment event log (BR-ASSIGN-004 — history
+/// must never be overwritten). `previousAssignmentId` is null for the
+/// INITIAL event and points at the exact TaskAssignment a REASSIGNMENT
+/// superseded, so the full chain is reconstructable. `note` is populated
+/// only for INITIAL; `reason` is mandatory and non-blank only for
+/// REASSIGNMENT (BDR-ASSIGN-005) — enforced by
+/// `task_assignments_type_consistency_check` at the database level.
+model TaskAssignment {
+  id                    String         @id @default(uuid()) @db.Uuid
+  taskId                String         @map("task_id") @db.Uuid
+  assignmentType        AssignmentType @map("assignment_type")
+  previousAssignmentId  String?        @unique @map("previous_assignment_id") @db.Uuid
+  primaryAssigneeUserId String         @map("primary_assignee_user_id") @db.Uuid
+  actorUserId           String         @map("actor_user_id") @db.Uuid
+  note                  String?        @db.VarChar(1000)
+  reason                String?        @db.VarChar(1000)
+  createdAt             DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  task               DeliveryTask            @relation(fields: [taskId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  previousAssignment TaskAssignment?         @relation("AssignmentSupersession", fields: [previousAssignmentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  supersededBy       TaskAssignment?         @relation("AssignmentSupersession")
+  primaryAssignee    User                    @relation("TaskAssignmentPrimary", fields: [primaryAssigneeUserId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  actor              User                    @relation("TaskAssignmentActor", fields: [actorUserId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  supportingEmployees TaskAssignmentSupport[]
+  currentPointer      TaskCurrentAssignment?
+
+  @@index([taskId])
+  @@index([primaryAssigneeUserId])
+  @@index([actorUserId])
+  @@map("task_assignments")
+}
+
+/// Supporting employees of one immutable TaskAssignment event
+/// (BDR-ASSIGN-001/002 — informational only, never task record scope).
+/// Created once alongside its parent TaskAssignment and never modified.
+model TaskAssignmentSupport {
+  id            String   @id @default(uuid()) @db.Uuid
+  assignmentId  String   @map("assignment_id") @db.Uuid
+  supportUserId String   @map("support_user_id") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  assignment  TaskAssignment @relation(fields: [assignmentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  supportUser User           @relation(fields: [supportUserId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([assignmentId, supportUserId])
+  @@index([assignmentId])
+  @@index([supportUserId])
+  @@map("task_assignment_supports")
+}
+
+/// Mutable one-row-per-task pointer at the current TaskAssignment. The
+/// primary key on `taskId` is the database-level "at most one current
+/// assignment per task" backstop. `primaryAssigneeUserId` is a denormalized
+/// copy of `currentAssignment.primaryAssigneeUserId` maintained only by
+/// AssignmentService (both are always written in the same transaction) so
+/// active-workload-by-primary-assignee queries never need to join through
+/// TaskAssignment.
+model TaskCurrentAssignment {
+  taskId                String   @id @map("task_id") @db.Uuid
+  currentAssignmentId   String   @unique @map("current_assignment_id") @db.Uuid
+  primaryAssigneeUserId String   @map("primary_assignee_user_id") @db.Uuid
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  task              DeliveryTask   @relation(fields: [taskId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  currentAssignment TaskAssignment @relation(fields: [currentAssignmentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  primaryAssignee   User           @relation("TaskCurrentAssignmentPrimary", fields: [primaryAssigneeUserId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([primaryAssigneeUserId])
+  @@map("task_current_assignments")
 }

@@ -145,3 +145,42 @@ export type PreparationCorrectionReviewStatus = (typeof PREPARATION_CORRECTION_R
 export function isPreparationCorrectionReviewStatus(value: string): value is PreparationCorrectionReviewStatus {
   return (PREPARATION_CORRECTION_REVIEW_STATUS_CODES as readonly string[]).includes(value);
 }
+
+/**
+ * MVP-04 — Delivery Task Assignment (BDR-ASSIGN-001 through BDR-ASSIGN-005).
+ * `assignmentType` distinguishes the initial READY_FOR_DISPATCH -> ASSIGNED
+ * assignment from a later formal reassignment (ASSIGNED -> ASSIGNED); the
+ * two carry different mandatory fields (optional note vs. mandatory reason)
+ * enforced by both the domain layer and a database CHECK constraint.
+ */
+export const ASSIGNMENT_TYPE_CODES = ["INITIAL", "REASSIGNMENT"] as const;
+
+export type AssignmentType = (typeof ASSIGNMENT_TYPE_CODES)[number];
+
+export function isAssignmentType(value: string): value is AssignmentType {
+  return (ASSIGNMENT_TYPE_CODES as readonly string[]).includes(value);
+}
+
+/**
+ * Centralized definition of "active assignment workload" (BDR-ASSIGN-004) —
+ * the single source of truth imported by apps/api, apps/admin-web, and
+ * apps/mobile-pwa so no active-status literal is ever duplicated. This is
+ * every non-terminal Delivery Task Status reachable only after a primary
+ * assignee has been formally assigned. In MVP-04 only `ASSIGNED` is
+ * reachable through any API (IN_TRANSIT/AT_DESTINATION/WAITING_NEXT_ATTEMPT
+ * are reserved DELIVERY_TASK_STATUS_CODES values not yet reachable by any
+ * transition) — the remaining three are included now so a future
+ * milestone's workload counting never has to touch this definition again.
+ */
+export const ACTIVE_ASSIGNMENT_WORKLOAD_STATUSES = [
+  "ASSIGNED",
+  "IN_TRANSIT",
+  "AT_DESTINATION",
+  "WAITING_NEXT_ATTEMPT",
+] as const;
+
+export type ActiveAssignmentWorkloadStatus = (typeof ACTIVE_ASSIGNMENT_WORKLOAD_STATUSES)[number];
+
+export function isActiveAssignmentWorkloadStatus(value: string): value is ActiveAssignmentWorkloadStatus {
+  return (ACTIVE_ASSIGNMENT_WORKLOAD_STATUSES as readonly string[]).includes(value);
+}
