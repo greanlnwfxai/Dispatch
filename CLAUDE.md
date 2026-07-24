@@ -341,3 +341,21 @@ approach these areas must:
   allow adding the rule later without a schema/aggregate rewrite.
 - Never hardcode a default answer to an open BDR "just to make progress."
 - Flag the conflict to the user instead of guessing.
+
+## 21. Architecture Decision Record (ADR) Governance
+
+`docs/adr/` holds the Architecture Decision Record set (policy in
+`docs/adr/README.md`). Engineering tasks:
+- Inspect accepted ADRs before starting architecture-changing work — an
+  Accepted ADR records a constraint future implementation must preserve.
+- Create a new ADR for a material architecture decision (see
+  `docs/adr/README.md` §5 for when one is required).
+- Never rewrite an Accepted ADR to hide a later architectural change —
+  supersede it with a new ADR instead (old ADR status becomes `Superseded`,
+  pointing at the new one).
+- Never use an ADR to approve or reinterpret a business rule — BDR (Topic
+  07) and TDR (Topic 11 §22) remain the sole authority for business and
+  open-technical decisions respectively.
+- Documentation-only ADR work still follows the manual Git policy in §9 —
+  Claude Code / Codex drafts and edits ADR files but never stages or
+  commits them.

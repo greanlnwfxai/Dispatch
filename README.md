@@ -297,6 +297,17 @@ Dispatch/
 └── .env.example
 ```
 
+## Architecture Decision Records
+
+`docs/adr/` holds the Architecture Decision Record (ADR) set — why the
+technical architecture through MVP-04 was built this way, and what future
+implementation must preserve. Start at
+[`docs/adr/README.md`](docs/adr/README.md) for the policy and the ADR
+index (ADR-0001 through ADR-0007). ADRs record technical architecture
+decisions only — business rules stay authoritative in Dispatch Knowledge
+Topic 07 (BDR register); technical options still under evaluation stay in
+Topic 11 §22 (TDR register).
+
 ## Manual Git workflow
 
 All Git write operations (`add`, `commit`, `push`, `tag`, `merge`) are
